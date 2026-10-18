@@ -1,0 +1,18 @@
+# Copyright 2026 FlagOS Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+# Autotune candidate space for the packed bitwise kernels.
+#
+# These kernels are bandwidth-bound, so the space varies tile shape and
+# occupancy rather than anything arithmetic. Wide-and-short tiles suit the
+# packed layout because four components already collapse into one lane.
+
+packed_elementwise_2d:
+  candidates:
+    - { BLOCK_X: 64, BLOCK_Y: 4, num_warps: 4 }
+    - { BLOCK_X: 128, BLOCK_Y: 4, num_warps: 4 }
+    - { BLOCK_X: 128, BLOCK_Y: 8, num_warps: 8 }
+    - { BLOCK_X: 256, BLOCK_Y: 2, num_warps: 4 }
+    - { BLOCK_X: 256, BLOCK_Y: 4, num_warps: 8 }
+    - { BLOCK_X: 512, BLOCK_Y: 1, num_warps: 4 }
+    - { BLOCK_X: 512, BLOCK_Y: 2, num_warps: 8 }

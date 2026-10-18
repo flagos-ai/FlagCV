@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "ownership": "nvidia",
+  "kernels": [
+    {
+      "operations": [
+        "bitwise_binary",
+        "bitwise_not"
+      ],
+      "provider": "nvidia_triton",
+      "source": "bitwise.py",
+      "functions": [
+        "bitwise_binary_packed_kernel",
+        "bitwise_not_packed_kernel"
+      ],
+      "constraints": {
+        "depth": ["8u", "8s"],
+        "row_alignment_in_bytes": 4,
+        "components_per_row_multiple_of": 4
+      },
+      "tuning": {
+        "source": "bitwise.yaml",
+        "table": "packed_elementwise_2d",
+        "key": "width_in_words,height",
+        "strategy": "align32",
+        "warmup": 10,
+        "repetitions": 20
+      }
+    }
+  ]
+}
