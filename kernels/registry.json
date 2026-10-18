@@ -1,28 +1,4 @@
 {
-  "schema_version": 1,
-  "ownership": "common",
-  "kernels": [
-    {
-      "operations": [
-        "bitwise_binary",
-        "bitwise_binary_scalar",
-        "bitwise_not"
-      ],
-      "provider": "common_triton",
-      "source": "bitwise.py",
-      "functions": [
-        "bitwise_binary_kernel",
-        "bitwise_binary_scalar_kernel",
-        "bitwise_not_kernel"
-      ],
-      "tuning": {
-        "source": "common.yaml",
-        "table": "elementwise_2d",
-        "key": "width,height",
-        "strategy": "align32",
-        "warmup": 5,
-        "repetitions": 10
-      }
-    }
-  ]
+  "platform": "common",
+  "kernels": []
 }

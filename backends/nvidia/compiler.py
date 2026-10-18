@@ -3,43 +3,33 @@
 
 """NVIDIA compiler provider.
 
-Two responsibilities:
+TODO: implement identify() and compile().
 
-* ``identify()`` returns a digest of everything that can change generated
-  code. The runtime folds it into the artifact cache key, so a toolchain or
-  kernel source change invalidates cached artifacts automatically.
-* ``compile()`` resolves the kernel through the platform-then-common registry
-  and compiles the selected variants.
+Kernel capability decisions live here, not in lowering: block sizes, shared
+memory limits and grid extents are platform properties, so lowering stays
+unchanged when a platform is added.
 
-Kernel capability decisions live here rather than in lowering: block sizes,
-shared memory limits and maximum grid extents are platform properties, so
-lowering stays unchanged when a new platform is added.
+This also decides which kernel to use. Resolution order is this platform's
+kernels/registry.json, then the common kernels/registry.json. Platform
+registration is EXCLUSIVE: once an operation is registered here, a constraint
+failure must be reported, not silently retried against the common kernel. So
+every layout constraint a platform kernel relies on gets checked here, before
+compiling, where the operand layout is fully known.
 """
 
-PROVIDER_NAME = "nvidia_triton"
+PROVIDER = "nvidia"
 
 
 def identify():
-    """TODO: return a digest over the toolchain and kernel sources.
+    """TODO: digest everything that can change generated code.
 
-    Must cover at least: the Python interpreter, the Triton distribution and
-    its version, this file, and every kernel source reachable through both
-    registries.
+    At minimum the Python interpreter, the Triton version, this file and every
+    kernel source reachable through both registries. The runtime folds it into
+    the cache key, so a kernel edit invalidates cached artifacts.
     """
     raise NotImplementedError
 
 
 def compile(request):
-    """TODO: compile the kernel named by `request`.
-
-    Steps:
-      1. Resolve the operation against backends/nvidia/kernels/registry.json,
-         falling back to kernels/registry.json when unregistered here.
-      2. Reject the request when a platform-registered kernel's constraints do
-         not hold, rather than silently switching to the common kernel --
-         platform registration is exclusive, and dispatch/ has already checked
-         those constraints at build time.
-      3. Expand autotune candidates from the registry's tuning section.
-      4. Compile each variant and report grid, warp count and signature.
-    """
+    """TODO: compile the kernel named by `request`."""
     raise NotImplementedError

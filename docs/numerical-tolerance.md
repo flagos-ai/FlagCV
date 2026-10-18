@@ -46,6 +46,6 @@
 
 ## 实现位置
 
-比较器在 `tests/common/tolerance.hpp`，参考实现在 `reference/cpu/`。参考实现为零
-依赖标量代码；平台参考库仅在 `backends/<platform>/validation/` 下作为交叉验证基准
-出现，不进入生产依赖。
+本文是策略，尚无代码。第一个算子落地时一并建立：比较器放 `tests/common/tolerance.hpp`，
+标量参考实现放 `reference/cpu/`（零依赖，不链任何厂商库）。厂商参考库只能出现在
+`backends/<platform>/validation/` 下做交叉验证，不进生产依赖。
