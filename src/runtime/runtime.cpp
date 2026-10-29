@@ -1,6 +1,7 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
 #include "src/runtime/runtime.hpp"
+#include "src/runtime/backend_plugin.hpp"
 
 namespace flagcv {
 
@@ -43,19 +44,20 @@ ResolvedKernel resolve_kernel(const std::string& backend,
 }
 
 /*
- * TODO: implement Handle.
- *
- * State holds the loaded backend plugin, the device, and the compiled-kernel
- * cache. Construction loads the plugin by name; destruction releases the
- * cache before the plugin.
+ * State holds the loaded backend plugin and device. When the execution path
+ * adds a compiled-kernel cache, it must release it before the plugin.
  */
 struct Handle::State {
   std::string backend;
   int device = 0;
+  BackendPlugin plugin;
+
+  State(const std::string& name, int index)
+      : backend(name), device(index), plugin(name, index) {}
 };
 
 Handle::Handle(const std::string& backend, int device)
-    : state_(new State{backend, device}) {}
+    : state_(new State(backend, device)) {}
 
 Handle::~Handle() = default;
 Handle::Handle(Handle&&) noexcept = default;
