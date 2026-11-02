@@ -15,6 +15,10 @@ Build the HIP plugin with `-DFLAGCV_BACKENDS=amd` and select it with
 See [AMD setup and validation](docs/amd.md) for build instructions, the external
 Triton compiler contract and GPU tests.
 
+The AMD path supports the official FlagTree 0.7.0+amd3.6 compiler on ROCm
+7.2.4 and retains compatibility with AMD Triton 3.8 on ROCm 10.1. Use
+[`docker/amd/Dockerfile`](docker/amd/Dockerfile) for the pinned FlagTree environment.
+
 The project currently has no public image operators. AMD support provides the
 device/module/launch backend and compiler foundation; operator execution and
 the common runtime's compilation cache remain to be implemented.

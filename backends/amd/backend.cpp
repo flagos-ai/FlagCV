@@ -15,6 +15,10 @@ namespace {
 
 void check(hipError_t status, const char* operation) {
   if (status != hipSuccess) {
+    // The status is reported through BackendError. Consume HIP's per-thread
+    // error too, so a handled module failure cannot poison the caller's next
+    // HIP/PyTorch operation (notably on ROCm 7.2).
+    (void)hipGetLastError();
     throw std::runtime_error(std::string(operation) + ": " +
                              hipGetErrorString(status));
   }

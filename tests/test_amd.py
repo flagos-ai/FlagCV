@@ -24,9 +24,15 @@ SPEC = importlib.util.spec_from_file_location(
 PROVIDER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PROVIDER)
 PLUGIN = None
+AOT_TARGET = None
 if "--plugin" in sys.argv:
     index = sys.argv.index("--plugin")
     PLUGIN = sys.argv[index + 1]
+    del sys.argv[index : index + 2]
+if "--aot-target" in sys.argv:
+    index = sys.argv.index("--aot-target")
+    arch, wave = sys.argv[index + 1].split(":")
+    AOT_TARGET = types.SimpleNamespace(arch=arch, warp_size=int(wave))
     del sys.argv[index : index + 2]
 
 
@@ -49,6 +55,30 @@ class RegistryFixture(unittest.TestCase):
         entry.update(changes)
         (directory / "registry.json").write_text(json.dumps({"kernels": [entry]}))
         return directory / "test.py"
+
+    def request(self, bits):
+        return {
+            "kernel": "test",
+            "target": {"arch": self.target.arch, "warp_size": self.target.warp_size},
+            "grid": [8, 1, 1],
+            "signature": {
+                "src": f"*u{bits}",
+                "dst": f"*u{bits}",
+                "mask": "*u8",
+                **{
+                    name: "i32"
+                    for name in (
+                        "width",
+                        "height",
+                        "channels",
+                        "src_stride",
+                        "dst_stride",
+                        "mask_stride",
+                    )
+                },
+            },
+            "constants": {"BLOCK": 128},
+        }
 
 
 class ProviderTests(RegistryFixture):
@@ -113,6 +143,54 @@ class ProviderTests(RegistryFixture):
         self.assertEqual(result.stdout, "")
         self.assertIn("invalid backend name", result.stderr)
 
+    def test_active_flagtree_identity(self):
+        module = self.root / "flagtree/triton/__init__.py"
+        module.parent.mkdir(parents=True)
+        module.write_text('__version__ = "3.6.0"')
+        fake = types.SimpleNamespace(__version__="3.6.0", __file__=str(module))
+        owner = types.SimpleNamespace(
+            version="0.7.0+amd3.6", locate_file=lambda _: module
+        )
+        inherited = types.SimpleNamespace(
+            version="3.6.0+rocm7.2.4",
+            locate_file=lambda _: self.root / "stock/triton.py",
+        )
+
+        def distribution(name):
+            return owner if name == "flagtree" else inherited
+
+        with patch.dict(sys.modules, triton=fake), patch.object(
+            PROVIDER.importlib.metadata, "distribution", side_effect=distribution
+        ):
+            identity = PROVIDER.compiler_identity()
+            self.assertEqual(identity["distribution"], "flagtree")
+            self.assertEqual(identity["version"], "0.7.0+amd3.6")
+            before = PROVIDER.identify(root=self.root)
+            owner.version = "0.7.1+amd3.6"
+            self.assertNotEqual(before, PROVIDER.identify(root=self.root))
+
+    def test_scratch_abi_compatibility(self):
+        for metadata in (
+            types.SimpleNamespace(triton_version="3.6.0", profile_scratch_size=0),
+            types.SimpleNamespace(
+                triton_version="3.8.0", profile_scratch_size=0, global_scratch_size=0
+            ),
+        ):
+            self.assertEqual(
+                PROVIDER.implicit_null_arguments(metadata),
+                ["global_scratch", "profile_scratch"],
+            )
+        for metadata in (
+            types.SimpleNamespace(triton_version="3.6.0", profile_scratch_size=16),
+            types.SimpleNamespace(
+                triton_version="3.8.0", profile_scratch_size=0, global_scratch_size=16
+            ),
+            types.SimpleNamespace(triton_version="unknown", profile_scratch_size=0),
+            types.SimpleNamespace(triton_version="3.6.0"),
+        ):
+            with self.assertRaises(ValueError):
+                PROVIDER.implicit_null_arguments(metadata)
+
 
 class Error(C.Structure):
     _fields_ = [("message", C.c_char * 512)]
@@ -174,30 +252,6 @@ class GpuTests(RegistryFixture):
 
     def ok(self, status):
         self.assertEqual(status, 0, self.error.message.decode())
-
-    def request(self, bits):
-        return {
-            "kernel": "test",
-            "target": {"arch": self.target.arch, "warp_size": self.target.warp_size},
-            "grid": [8, 1, 1],
-            "signature": {
-                "src": f"*u{bits}",
-                "dst": f"*u{bits}",
-                "mask": "*u8",
-                **{
-                    name: "i32"
-                    for name in (
-                        "width",
-                        "height",
-                        "channels",
-                        "src_stride",
-                        "dst_stride",
-                        "mask_stride",
-                    )
-                },
-            },
-            "constants": {"BLOCK": 128},
-        }
 
     def test_compile_and_launch(self):
         torch = self.torch
@@ -326,6 +380,25 @@ class GpuTests(RegistryFixture):
             finally:
                 self.ok(self.api.unload(self.context, kernel, C.byref(self.error)))
 
+
+@unittest.skipUnless(AOT_TARGET, "set FLAGCV_TEST_AMD_AOT_TARGET for AOT checks")
+class CompileTests(RegistryFixture):
+    def setUp(self):
+        super().setUp()
+        self.target = AOT_TARGET
+
+    def test_compile_hsaco(self):
+        self.register()
+        for bits in (8, 16):
+            response = PROVIDER.compile(self.request(bits), root=self.root)
+            self.assertEqual(response["format"], "hsaco")
+            self.assertTrue(
+                base64.b64decode(response["artifact"]).startswith(b"\x7fELF")
+            )
+            self.assertEqual(response["block"], [4 * self.target.warp_size, 1, 1])
+            self.assertEqual(response["target"]["arch"], self.target.arch)
+            self.assertEqual(response["compiler"], PROVIDER.compiler_identity())
+
     def test_invalid_compile_requests(self):
         self.register()
         for field, value in (
@@ -335,7 +408,7 @@ class GpuTests(RegistryFixture):
             ("target", {"arch": "gfx1201", "warp_size": 16}),
             ("options", {"num_ctas": 2}),
             ("options", {"num_warps": 3}),
-            ("options", {"arch": "gfx942"}),
+            ("options", {"arch": "invalid"}),
             ("options", {"launch_cooperative_grid": True}),
             ("signature", {"not_an_argument": "i32"}),
         ):

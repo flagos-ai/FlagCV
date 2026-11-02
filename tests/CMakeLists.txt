@@ -19,6 +19,19 @@ if(TARGET flagcv_backend_amd)
   add_test(NAME amd_provider
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_amd.py)
 
+  set(FLAGCV_TEST_AMD_AOT_TARGET "" CACHE STRING
+    "Optional GPU-free AMD AOT test target, e.g. gfx1201:32 or gfx942:64")
+  if(FLAGCV_TEST_AMD_AOT_TARGET)
+    if(NOT FLAGCV_TEST_AMD_AOT_TARGET MATCHES "^gfx[0-9a-f]+:(32|64)$")
+      message(FATAL_ERROR "FLAGCV_TEST_AMD_AOT_TARGET must be gfx<arch>:<wave size>")
+    endif()
+    add_test(NAME amd_aot
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_amd.py
+        --aot-target ${FLAGCV_TEST_AMD_AOT_TARGET} CompileTests)
+    set_tests_properties(amd_aot PROPERTIES
+      ENVIRONMENT "HIP_VISIBLE_DEVICES=-1;ROCR_VISIBLE_DEVICES=-1")
+  endif()
+
   option(FLAGCV_TEST_AMD_GPU "Run AMD tests requiring a GPU, Triton and PyTorch" OFF)
   if(FLAGCV_TEST_AMD_GPU)
     find_package(hip CONFIG REQUIRED)

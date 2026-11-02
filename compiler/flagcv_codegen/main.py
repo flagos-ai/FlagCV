@@ -37,6 +37,8 @@ def main():
             if args.identify
             else provider.compile(json.load(sys.stdin))
         )
+        if args.identify and hasattr(provider, "compiler_identity"):
+            response["compiler"] = provider.compiler_identity()
         json.dump(response, sys.stdout)
         sys.stdout.write("\n")
     except Exception as error:
