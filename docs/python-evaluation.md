@@ -44,3 +44,19 @@ default reference.
 For this profile, baseline lookup requires an exact shape, dtype and
 OpenCV profile match. The runner reports `raw_speedup` as the baseline
 latency (`T_us`) divided by the measured candidate latency.
+
+### Profile one candidate case
+
+Pass a case ID from `--list-cases` to replay just that workload:
+
+```sh
+python -m pytest benchmark/test_add_benchmark.py --profile-only \
+  --case-id 'benchmark/test_add_benchmark.py::test_add_benchmark::core::uint8::3' \
+  --override add:/path/to/candidate.py --profile-warmup 10 --profile-iterations 1
+```
+
+The runner constructs inputs and warms up before capture. A pytest plugin can
+implement `pytest_flaggems_profile_scope(backend, case_id)` and return a context
+manager around the candidate calls and final synchronization. Without the
+plugin, the command only replays the candidate. Profile mode does not run
+correctness, collect benchmark latency, or read performance baseline data.

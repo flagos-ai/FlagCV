@@ -21,6 +21,16 @@ def _load_callable(path, name):
     return function
 
 
+class ProfileHooks:
+    @pytest.hookspec(firstresult=True)
+    def pytest_flaggems_profile_scope(self, backend, case_id):
+        """Return a capture context for the selected benchmark case."""
+
+
+def pytest_addhooks(pluginmanager):
+    pluginmanager.add_hookspecs(ProfileHooks)
+
+
 def pytest_addoption(parser):
     group = parser.getgroup("FlagCV evaluation")
     group.addoption("--device", default="cuda", help="Torch device for evaluation")
@@ -29,6 +39,9 @@ def pytest_addoption(parser):
     group.addoption("--dummy-candidate", choices=["add"])
     group.addoption("--ref-as-candidate", action="store_true")
     group.addoption("--list-cases", action="store_true")
+    group.addoption("--profile-only", action="store_true")
+    group.addoption("--profile-warmup", type=int, default=10)
+    group.addoption("--profile-iterations", type=int, default=1)
     group.addoption("--case-id", action="append", default=[])
     group.addoption("--output", type=Path, help="JSON catalog or benchmark result path")
     group.addoption("--base-data", type=Path, help="ops-baseline OpenCV CUDA JSON")
@@ -47,6 +60,37 @@ def pytest_configure(config):
     selected = config.getoption("case_id")
     if selected and config.getoption("list_cases"):
         raise pytest.UsageError("--list-cases enumerates all cases; omit --case-id")
+    if config.getoption("profile_only"):
+        if config.getoption("list_cases") or config.getoption("dummy_candidate"):
+            raise pytest.UsageError(
+                "--profile-only cannot be combined with --list-cases or --dummy-candidate"
+            )
+        if len(selected) != 1:
+            raise pytest.UsageError("--profile-only requires exactly one --case-id")
+        if config.getoption("profile_warmup") < 0 or config.getoption(
+            "profile_iterations"
+        ) < 1:
+            raise pytest.UsageError(
+                "profile warmup must be non-negative and iterations positive"
+            )
+        if not (config.getoption("override") or config.getoption("ref_as_candidate")):
+            raise pytest.UsageError(
+                "--profile-only requires --override or --ref-as-candidate"
+            )
+
+
+def pytest_collection_modifyitems(config, items):
+    if not config.getoption("profile_only"):
+        return
+    benchmark_dir = Path(__file__).resolve().parent / "benchmark"
+    selected = [item for item in items if benchmark_dir in item.path.parents]
+    if not selected:
+        raise pytest.UsageError("--profile-only requires a benchmark test")
+    deselected = [item for item in items if item not in selected]
+    items[:] = selected
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+
 
 
 class DummyReached(Exception):
