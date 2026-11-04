@@ -20,5 +20,7 @@ def add(a, b, dst):
     """Run cv::cuda::add and return the caller's preallocated destination."""
     recipe = os.environ.get("OPENCV_BASELINE_RECIPE")
     if not recipe:
-        raise RuntimeError("Set OPENCV_BASELINE_RECIPE to ops-baseline/ops/opencv/add.py")
+        raise RuntimeError(
+            "Set OPENCV_BASELINE_RECIPE to ops-baseline/ops/opencv/add.py"
+        )
     return _load_native(str(Path(recipe).resolve()))(a, b, dst)
