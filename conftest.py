@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from evaluation.reference import get_reference
+from reference import get_reference
 
 
 def _load_callable(path, name):

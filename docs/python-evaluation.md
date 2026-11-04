@@ -37,7 +37,7 @@ has another name. The default device is CUDA. Use `--reference FILE:FUNCTION`
 to additionally check an independent oracle with the same signature. This
 compares the selected reference and candidate against the supplied oracle.
 Correctness and `--ref-as-candidate` select the reference by operator and
-device type. Register backend-specific references in `evaluation/reference/`.
+device type. Register backend-specific references in `reference/`.
 When there is no backend-specific entry, the runner uses the operator's
 default reference.
 

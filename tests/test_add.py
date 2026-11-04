@@ -3,8 +3,8 @@
 import pytest
 
 from conftest import DummyReached, dummy
-from evaluation.add import CASES, Case, make_inputs
-from evaluation.reference import get_reference
+from workloads.add import CASES, Case, make_inputs
+from reference import get_reference
 
 
 @pytest.mark.add

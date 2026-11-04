@@ -6,7 +6,38 @@ import math
 import pytest
 
 from conftest import DummyReached, dummy, emit
-from evaluation.add import CASES, OP_NAME, lookup_baseline, make_inputs
+from workloads.add import CASES, OP_NAME, make_inputs
+
+
+CONTRACT = {
+    "native_api": "cv::cuda::add",
+    "channels": 1,
+    "mask": None,
+    "output_preallocated": True,
+}
+
+
+def _lookup_baseline(data, case):
+    """Match the narrow ops/opencv/add.py profile and return microseconds."""
+    dtype = f"torch.{case.dtype}"
+    record = (
+        data.get(OP_NAME, {})
+        .get("shapes", {})
+        .get(str(list(case.shape)), {})
+        .get(dtype)
+    )
+    if record is None:
+        return None, "missing add/shape/dtype record"
+    config = record.get("config", {})
+    required = {**CONTRACT, "output_dtype": dtype}
+    if any(
+        key not in config or config[key] != value for key, value in required.items()
+    ):
+        return None, "incompatible OpenCV CUDA add configuration"
+    latency = record.get("T_us")
+    if type(latency) not in (float, int) or not math.isfinite(latency) or latency <= 0:
+        return None, "missing or invalid T_us"
+    return latency, None
 
 
 def measure_us(function, inputs):
@@ -70,7 +101,7 @@ def test_add_benchmark(request, pytestconfig):
                 ),
             )
             if baseline is not None:
-                base_us, reason = lookup_baseline(baseline, case)
+                base_us, reason = _lookup_baseline(baseline, case)
                 result.update(
                     baseline_us=base_us,
                     baseline_miss=reason,
