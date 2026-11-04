@@ -1,6 +1,5 @@
 """Shared workload and reference for the first OpenCV CUDA add profile."""
 
-import importlib.util
 import math
 from dataclasses import dataclass
 
@@ -54,28 +53,6 @@ def make_inputs(case, device):
         ]
     a, b = (tensor.to(device) for tensor in inputs)
     return a, b, torch.empty_like(a)
-
-
-def reference(a, b, dst):
-    import torch
-
-    if a.dtype == torch.uint8:
-        dst.copy_((a.to(torch.int16) + b.to(torch.int16)).clamp_(0, 255))
-    else:
-        torch.add(a, b, out=dst)
-    return dst
-
-
-def load_callable(path, name):
-    spec = importlib.util.spec_from_file_location("_flagcv_evaluation_external", path)
-    if spec is None or spec.loader is None:
-        raise ValueError(f"Cannot load Python module from {path!r}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    function = getattr(module, name, None)
-    if not callable(function):
-        raise ValueError(f"{path!r} does not define callable {name!r}")
-    return function
 
 
 def lookup_baseline(data, case):

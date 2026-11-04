@@ -3,7 +3,8 @@
 import pytest
 
 from conftest import DummyReached, dummy
-from evaluation.add import CASES, Case, make_inputs, reference
+from evaluation.add import CASES, Case, make_inputs
+from evaluation.reference import get_reference
 
 
 @pytest.mark.add
@@ -13,7 +14,8 @@ from evaluation.add import CASES, Case, make_inputs, reference
 def test_add(case, candidate, native_reference, pytestconfig):
     import torch
 
-    a, b, dst = make_inputs(case, pytestconfig.getoption("device"))
+    device = pytestconfig.getoption("device")
+    a, b, dst = make_inputs(case, device)
     if case.shape == (1, 3):
         a.copy_(a.new_tensor([[250, 1, 255]]))
         b.copy_(b.new_tensor([[10, 2, 255]]))
@@ -24,6 +26,7 @@ def test_add(case, candidate, native_reference, pytestconfig):
         return
 
     a_before, b_before = a.clone(), b.clone()
+    reference = get_reference("add", device)
     expected = reference(a_before, b_before, torch.empty_like(dst))
     if case.shape == (1, 3):
         torch.testing.assert_close(expected, dst.new_tensor([[255, 3, 255]]))

@@ -1,11 +1,24 @@
 """Opt-in pytest entry points for FlagCV kernel evaluation."""
 
+import importlib.util
 import json
 from pathlib import Path
 
 import pytest
 
-from evaluation.add import load_callable, reference
+from evaluation.reference import get_reference
+
+
+def _load_callable(path, name):
+    spec = importlib.util.spec_from_file_location("_flagcv_evaluation_external", path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"Cannot load Python module from {path!r}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    function = getattr(module, name, None)
+    if not callable(function):
+        raise ValueError(f"{path!r} does not define callable {name!r}")
+    return function
 
 
 def pytest_addoption(parser):
@@ -50,13 +63,13 @@ def candidate(request):
     if config.getoption("dummy_candidate"):
         return dummy
     if config.getoption("ref_as_candidate"):
-        return reference
+        return get_reference("add", config.getoption("device"))
     override = config.getoption("override")
     if override:
         parts = override.split(":")
         if len(parts) not in (2, 3) or parts[0] != "add" or not all(parts):
             raise pytest.UsageError("Expected --override add:FILE[:FUNCTION]")
-        return load_callable(parts[1], parts[2] if len(parts) == 3 else "add")
+        return _load_callable(parts[1], parts[2] if len(parts) == 3 else "add")
     pytest.skip(
         "Select a candidate with --override, --dummy-candidate or --ref-as-candidate"
     )
@@ -70,7 +83,7 @@ def native_reference(request):
     path, sep, function = spec.rpartition(":")
     if not sep or not path or not function:
         raise pytest.UsageError("Expected --reference FILE:FUNCTION")
-    return load_callable(path, function)
+    return _load_callable(path, function)
 
 
 def emit(config, data):

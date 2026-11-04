@@ -35,7 +35,11 @@ python -m pytest benchmark/test_add_benchmark.py -m add --override add:/path/to/
 Append `:FUNCTION` to the override specification if the candidate entry point
 has another name. The default device is CUDA. Use `--reference FILE:FUNCTION`
 to additionally check an independent oracle with the same signature. This
-compares the Torch reference and candidate against the supplied oracle.
+compares the selected reference and candidate against the supplied oracle.
+Correctness and `--ref-as-candidate` select the reference by operator and
+device type. Register backend-specific references in `evaluation/reference/`.
+When there is no backend-specific entry, the runner uses the operator's
+default reference.
 
 For this profile, baseline lookup requires an exact shape, dtype and
 OpenCV profile match. The runner reports `raw_speedup` as the baseline
