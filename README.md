@@ -8,4 +8,4 @@ FlagCV is a high-performance computer vision library implemented in Triton langu
 
 Built on FlagTree (a FlagOS-maintained Triton fork supporting multiple hardware backends), FlagCV offers a vendor-agnostic operator interface with pluggable backend support.
 
-See [Evaluating the add kernel](docs/add-evaluation.md) for the Python evaluation workflow.
+See the [Python kernel evaluation guide](docs/python-evaluation.md) for the shared pytest workflow and an `add` example.

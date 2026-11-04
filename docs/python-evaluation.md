@@ -1,14 +1,22 @@
-# Evaluate the add kernel
+# Python kernel evaluation
 
-The Python evaluation uses the same first profile as
+FlagCV's Python evaluation workflow supports case listing and selection,
+candidate override, dummy candidate injection, reference as candidate, and
+benchmark comparison with static baseline data. Operator tests and benchmarks
+use the root pytest options to expose these capabilities. Each operator defines
+its own callable signature, inputs, and reference.
+
+The Python Definition describes the candidate interface. The C++ integration
+has its own CTest entry points.
+
+## Example: add
+
+The `add` profile matches
 [ops-baseline's OpenCV CUDA add](https://github.com/zhaojs12345/ops-baseline/tree/3b2f022314b0d6e3bf6857f400c31beb65a505dd/ops/opencv).
 It covers four image sizes with float32 and uint8, contiguous single-channel
 inputs, no mask and an independent preallocated destination. A candidate
 implements `add(a, b, dst)`, writes all of `dst`, returns that same tensor and
 leaves both inputs unchanged. The uint8 result saturates at 255.
-
-The Definition describes this Python callable. It is independent of the
-C++ `Handle` and `GpuMat` integration, which has its own CTest entry points.
 
 Run from the repository root. Case listing only requires pytest. Executing
 cases requires Torch and the requested device runtime. Timing uses the
@@ -29,8 +37,6 @@ has another name. The default device is CUDA. Use `--reference FILE:FUNCTION`
 to additionally check an independent oracle with the same signature. This
 compares the Torch reference and candidate against the supplied oracle.
 
-Benchmark results compare device microseconds with the supplied
-OpenCV CUDA record's `T_us`. Lookup requires an exact shape, dtype and
-OpenCV profile match. The reported speedup is the raw latency ratio.
-Dummy runs report candidate reachability, and reference-as-candidate runs
-exercise the test harness. Use an explicit candidate for performance claims.
+For this profile, baseline lookup requires an exact shape, dtype and
+OpenCV profile match. The runner reports `raw_speedup` as the baseline
+latency (`T_us`) divided by the measured candidate latency.
