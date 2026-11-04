@@ -1,0 +1,16 @@
+{
+  "api_version": "v6.0",
+  "name": "add",
+  "requires_triton_kernel": true,
+  "description": "Add equally shaped contiguous single-channel HxW tensors without a mask. Inputs and preallocated destination have the same dtype (float32 or uint8). The destination is independent of both inputs. Float32 uses ordinary addition; uint8 saturates to 255. Write every destination element and return the destination.",
+  "parameters": [
+    {"name": "a", "kind": "positional_or_keyword", "required": true},
+    {"name": "b", "kind": "positional_or_keyword", "required": true},
+    {"name": "dst", "kind": "positional_or_keyword", "required": true}
+  ],
+  "outputs": ["dst"],
+  "effects": {
+    "mutates": ["dst"],
+    "returns_alias_of": {"dst": "dst"}
+  }
+}
