@@ -25,12 +25,9 @@ python -m pytest benchmark/test_add_benchmark.py -m add --override add:/path/to/
 ```
 
 Append `:FUNCTION` to the override specification if the candidate entry point
-has another name. The default device is CUDA. To compare against OpenCV CUDA
-on NVIDIA, build the existing ops-baseline bridge, set
-`OPENCV_BASELINE_LIBRARY` as documented there and pass
-`--opencv-recipe /path/to/ops-baseline/ops/opencv/add.py` to correctness.
-That mode first checks the Torch reference against native OpenCV, then
-checks the candidate against the native output.
+has another name. The default device is CUDA. Use `--reference FILE:FUNCTION`
+to additionally check an independent oracle with the same signature. This
+compares the Torch reference and candidate against the supplied oracle.
 
 Benchmark results compare device microseconds with the supplied
 OpenCV CUDA record's `T_us`. Lookup requires an exact shape, dtype and

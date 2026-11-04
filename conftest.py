@@ -19,7 +19,9 @@ def pytest_addoption(parser):
     group.addoption("--case-id", action="append", default=[])
     group.addoption("--output", type=Path, help="JSON catalog or benchmark result path")
     group.addoption("--base-data", type=Path, help="ops-baseline OpenCV CUDA JSON")
-    group.addoption("--opencv-recipe", type=Path, help="ops-baseline ops/opencv/add.py")
+    group.addoption(
+        "--reference", metavar="FILE:FUNCTION", help="Independent correctness oracle"
+    )
 
 
 def pytest_configure(config):
@@ -62,13 +64,13 @@ def candidate(request):
 
 @pytest.fixture(scope="session")
 def native_reference(request):
-    path = request.config.getoption("opencv_recipe")
-    if path is None:
+    spec = request.config.getoption("reference")
+    if spec is None:
         return None
-    native = load_callable(path, "native")()
-    if native is None:
-        pytest.fail("OpenCV CUDA recipe could not load its native bridge")
-    return native
+    path, sep, function = spec.rpartition(":")
+    if not sep or not path or not function:
+        raise pytest.UsageError("Expected --reference FILE:FUNCTION")
+    return load_callable(path, function)
 
 
 def emit(config, data):
