@@ -2,14 +2,12 @@
 
 import json
 import math
-import os
 from contextlib import nullcontext
 
 import pytest
 
-from conftest import DummyReached, dummy, emit
+from conftest import emit
 from workloads.add import CASES, OP_NAME, make_inputs
-
 
 CONTRACT = {
     "native_api": "cv::cuda::add",
@@ -59,12 +57,7 @@ def _profile_case(config, case_id, candidate, warmup_inputs, capture_inputs):
     import torch
 
     device = capture_inputs[0].device
-    backend = os.environ.get("DNN_VENDOR") or {
-        "cuda": "nvidia",
-        "npu": "ascend",
-        "musa": "mthreads",
-        "mlu": "cambricon",
-    }.get(device.type, device.type)
+    backend = config._flagcv_runtime.vendor
     device_module = torch.get_device_module(device) if device.type != "cpu" else None
     with device_module.device(device) if device_module else nullcontext():
         for _ in range(config.getoption("profile_warmup")):
@@ -74,11 +67,15 @@ def _profile_case(config, case_id, candidate, warmup_inputs, capture_inputs):
         scope = config.hook.pytest_flaggems_profile_scope(
             backend=backend, case_id=case_id
         )
+        before = config._evaluation.calls
         with scope if scope is not None else nullcontext():
             for _ in range(config.getoption("profile_iterations")):
                 candidate(*capture_inputs)
             if device_module:
                 device_module.synchronize()
+        assert (
+            config._evaluation.calls > before
+        ), "Profile did not execute its candidate"
 
 
 @pytest.mark.add
@@ -108,7 +105,9 @@ def test_add_benchmark(request, pytestconfig):
     candidate = request.getfixturevalue("candidate")
     device = pytestconfig.getoption("device")
     if pytestconfig.getoption("profile_only"):
-        case = next(case for case, row in zip(CASES, cases) if row["case_id"] == selected[0])
+        case = next(
+            case for case, row in zip(CASES, cases) if row["case_id"] == selected[0]
+        )
         _profile_case(
             pytestconfig,
             selected[0],
@@ -119,33 +118,87 @@ def test_add_benchmark(request, pytestconfig):
         return
 
     baseline_path = pytestconfig.getoption("base_data")
-    baseline = json.loads(baseline_path.read_text()) if baseline_path else None
+    baseline = (
+        json.loads(baseline_path.read_text())
+        if baseline_path and candidate.source != "dummy"
+        else None
+    )
+    state = pytestconfig._evaluation
     results = []
+    probe_start = len(state.records)
+    expected_probe_cases = {
+        row["case_id"] for row in cases if not selected or row["case_id"] in selected
+    }
     for case, result in zip(CASES, cases):
         if selected and result["case_id"] not in selected:
             continue
-        inputs = make_inputs(case, device)
-        if candidate is dummy:
-            with pytest.raises(DummyReached):
-                candidate(*inputs)
-            result["status"] = "reached"
+        if candidate.source == "dummy":
+            state.run_probe(
+                candidate,
+                lambda: make_inputs(case, device),
+                request.node.nodeid,
+                result["case_id"],
+            )
+            continue
         else:
+            inputs = make_inputs(case, device)
+            before = state.calls
             latency = measure_us(candidate, inputs)
+            assert state.calls > before, "Candidate timer did not execute the candidate"
             assert math.isfinite(latency) and latency > 0
+            state.timings += 1
             result.update(
-                latency_us=latency,
-                candidate_source=(
-                    "reference"
-                    if pytestconfig.getoption("ref_as_candidate")
-                    else "override"
-                ),
+                latency=latency / 1000,
+                candidate_source=candidate.source,
             )
             if baseline is not None:
                 base_us, reason = _lookup_baseline(baseline, case)
                 result.update(
-                    baseline_us=base_us,
-                    baseline_miss=reason,
+                    base_miss_reason=reason,
                     raw_speedup=base_us / latency if base_us is not None else None,
+                    baseline_us=base_us,
                 )
         results.append(result)
-    emit(pytestconfig, {"op_name": OP_NAME, "cases": results})
+    if candidate.source == "dummy":
+        observed = [
+            row["case_id"] for row in state.records[probe_start:] if "case_id" in row
+        ]
+        assert (
+            len(observed) == len(expected_probe_cases)
+            and set(observed) == expected_probe_cases
+        )
+    else:
+        details = []
+        for dtype in dict.fromkeys(row["dtype"] for row in results):
+            metrics = []
+            for row in results:
+                if row["dtype"] == dtype:
+                    metrics.append(
+                        {
+                            "case_id": row["case_id"],
+                            "shape_detail": row["shape"],
+                            "latency": row["latency"],
+                            "candidate_source": row["candidate_source"],
+                            "raw_speedup": row.get("raw_speedup"),
+                            "baseline_us": row.get("baseline_us"),
+                            "base_miss_reason": row.get("base_miss_reason"),
+                        }
+                    )
+            details.append(
+                {
+                    "op_name": OP_NAME,
+                    "dtype": dtype,
+                    "level": "core",
+                    "result": metrics,
+                }
+            )
+        emit(
+            pytestconfig,
+            {
+                OP_NAME: {
+                    "details": details,
+                    "result": "passed",
+                    "test_case": request.node.nodeid,
+                }
+            },
+        )

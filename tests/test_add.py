@@ -2,7 +2,6 @@
 
 import pytest
 
-from conftest import DummyReached, dummy
 from workloads.add import CASES, Case, make_inputs
 from reference import get_reference
 
@@ -15,16 +14,21 @@ def test_add(case, candidate, native_reference, pytestconfig):
     import torch
 
     device = pytestconfig.getoption("device")
-    a, b, dst = make_inputs(case, device)
-    if case.shape == (1, 3):
-        a.copy_(a.new_tensor([[250, 1, 255]]))
-        b.copy_(b.new_tensor([[10, 2, 255]]))
 
-    if candidate is dummy:
-        with pytest.raises(DummyReached):
-            candidate(a, b, dst)
+    def inputs():
+        a, b, dst = make_inputs(case, device)
+        if case.shape == (1, 3):
+            a.copy_(a.new_tensor([[250, 1, 255]]))
+            b.copy_(b.new_tensor([[10, 2, 255]]))
+        return a, b, dst
+
+    if candidate.source == "dummy":
+        pytestconfig._evaluation.run_probe(
+            candidate, inputs, pytestconfig._evaluation.active
+        )
         return
 
+    a, b, dst = inputs()
     a_before, b_before = a.clone(), b.clone()
     reference = get_reference("add", device)
     expected = reference(a_before, b_before, torch.empty_like(dst))
