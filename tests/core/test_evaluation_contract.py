@@ -253,3 +253,18 @@ def fake_inputs(monkeypatch):
     assert report["status"] == "PASSED"
     assert len(report["records"]) == 8
     assert [row["status"] for row in report["records"]] == ["REACHED", "SKIP"] * 4
+
+
+@pytest.mark.parametrize("outcome", ["skip", "xfail"])
+def test_dummy_post_call_skip_is_a_failure(suite, outcome):
+    suite.makepyfile(f"""
+import pytest
+def test_probe(candidate, pytestconfig, request):
+    pytestconfig._evaluation.run_probe(candidate, lambda: (1,), request.node.nodeid)
+    pytest.{outcome}("after invocation")
+""")
+    result = suite.runpytest_subprocess("--dummy-candidate", "add")
+    result.assert_outcomes(failed=1)
+    report = json.loads((suite.path / "dummy-candidate-report.json").read_text())
+    assert report["status"] == "FAILED"
+    assert any(row["status"] == "POST_CALL_ERROR" for row in report["records"])

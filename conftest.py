@@ -239,6 +239,32 @@ class Evaluation:
                     "message": str(report.longrepr),
                 }
             )
+        if (
+            dummy_mode
+            and report.skipped
+            and any(
+                record["nodeid"] == item.nodeid and record["status"] == "REACHED"
+                for record in self.records
+            )
+        ):
+            report.outcome = "failed"
+            report.longrepr = "Dummy candidate signal was followed by skip or xfail"
+            if hasattr(report, "wasxfail"):
+                del report.wasxfail
+            self.records.append(
+                {
+                    "operator": dummy_mode,
+                    "phase": (
+                        "benchmark" if "benchmark" in item.path.parts else "correctness"
+                    ),
+                    "nodeid": item.nodeid,
+                    "status": "POST_CALL_ERROR",
+                    "calls": 0,
+                    "before_candidate_calls": 0,
+                    "unexpected_calls": 0,
+                    "message": str(report.longrepr),
+                }
+            )
         if report.when != "call":
             if report.failed or report.skipped:
                 self.results[item.nodeid] = {
