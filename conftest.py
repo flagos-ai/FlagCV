@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from reference import get_reference
+from runtime import resolve_device
 
 
 def _load_callable(path, name):
@@ -33,7 +34,11 @@ def pytest_addhooks(pluginmanager):
 
 def pytest_addoption(parser):
     group = parser.getgroup("FlagCV evaluation")
-    group.addoption("--device", default="cuda", help="Torch device for evaluation")
+    group.addoption(
+        "--device",
+        default=None,
+        help="Optional device override; otherwise detect via GEMS_VENDOR/runtime",
+    )
     group.addoption("--level", choices=["core"], default="core")
     group.addoption("--override", metavar="add:FILE[:FUNCTION]")
     group.addoption("--dummy-candidate", choices=["add"])
@@ -67,9 +72,10 @@ def pytest_configure(config):
             )
         if len(selected) != 1:
             raise pytest.UsageError("--profile-only requires exactly one --case-id")
-        if config.getoption("profile_warmup") < 0 or config.getoption(
-            "profile_iterations"
-        ) < 1:
+        if (
+            config.getoption("profile_warmup") < 0
+            or config.getoption("profile_iterations") < 1
+        ):
             raise pytest.UsageError(
                 "profile warmup must be non-negative and iterations positive"
             )
@@ -92,7 +98,6 @@ def pytest_collection_modifyitems(config, items):
         config.hook.pytest_deselected(items=deselected)
 
 
-
 class DummyReached(Exception):
     """Signal raised only by the injected probe."""
 
@@ -104,6 +109,16 @@ def dummy(*args):
 @pytest.fixture(scope="session")
 def candidate(request):
     config = request.config
+    if not any(
+        config.getoption(name)
+        for name in ("dummy_candidate", "ref_as_candidate", "override")
+    ):
+        pytest.skip(
+            "Select a candidate with --override, --dummy-candidate or --ref-as-candidate"
+        )
+    runtime = resolve_device(config.getoption("device"))
+    config._flagcv_runtime = runtime
+    config.option.device = runtime.device
     if config.getoption("dummy_candidate"):
         return dummy
     if config.getoption("ref_as_candidate"):

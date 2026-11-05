@@ -33,7 +33,10 @@ python -m pytest benchmark/test_add_benchmark.py -m add --override add:/path/to/
 ```
 
 Append `:FUNCTION` to the override specification if the candidate entry point
-has another name. The default device is CUDA. Use `--reference FILE:FUNCTION`
+has another name. The runtime reads `GEMS_VENDOR`, otherwise detects the accelerator automatically.
+Use `--device cpu` to run CPU checks or an indexed device such as `npu:1` to
+select a device explicitly. Unknown vendors and conflicting accelerator device
+types raise an error. Use `--reference FILE:FUNCTION`
 to additionally check an independent oracle with the same signature. This
 compares the selected reference and candidate against the supplied oracle.
 Correctness and `--ref-as-candidate` select the reference by operator and
