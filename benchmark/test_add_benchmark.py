@@ -131,6 +131,10 @@ def test_add_benchmark(request, pytestconfig):
     )
     state = pytestconfig._evaluation
     results = []
+    probe_start = len(state.records)
+    expected_probe_cases = {
+        row["case_id"] for row in cases if not selected or row["case_id"] in selected
+    }
     for case, result in zip(CASES, cases):
         if selected and result["case_id"] not in selected:
             continue
@@ -161,7 +165,15 @@ def test_add_benchmark(request, pytestconfig):
                     baseline_us=base_us,
                 )
         results.append(result)
-    if candidate.source != "dummy":
+    if candidate.source == "dummy":
+        observed = [
+            row["case_id"] for row in state.records[probe_start:] if "case_id" in row
+        ]
+        assert (
+            len(observed) == len(expected_probe_cases)
+            and set(observed) == expected_probe_cases
+        )
+    else:
         details = []
         for dtype in dict.fromkeys(row["dtype"] for row in results):
             metrics = []

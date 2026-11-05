@@ -182,6 +182,9 @@ class Evaluation:
                 and self.calls == before
             ):
                 record["status"] = "SKIP"
+                record["message"] = str(error)
+                if case_id is not None:
+                    return
             elif invoking:
                 record["status"] = "POST_CALL_ERROR"
             record["message"] = str(error)
@@ -205,6 +208,17 @@ class Evaluation:
     @pytest.hookimpl(hookwrapper=True)
     def pytest_runtest_makereport(self, item, call):
         report = (yield).get_result()
+        if (
+            self.config.getoption("ref_as_candidate")
+            and report.when in ("setup", "call")
+            and not report.failed
+            and (report.when == "call" or report.skipped)
+            and not getattr(item, "_reference_declared", False)
+        ):
+            report.outcome = "failed"
+            report.longrepr = "No predefined reference selected for this test"
+            if hasattr(report, "wasxfail"):
+                del report.wasxfail
         dummy_mode = self.config.getoption("dummy_candidate")
         if (
             dummy_mode
@@ -343,7 +357,7 @@ def write_json(path, data):
 
 
 @pytest.fixture(scope="session")
-def candidate(request):
+def _selected_candidate(request):
     config = request.config
     state = config._evaluation
     if config.getoption("dummy_candidate"):
@@ -366,6 +380,12 @@ def candidate(request):
     pytest.skip(
         "Select a candidate with --override, --dummy-candidate or --ref-as-candidate"
     )
+
+
+@pytest.fixture
+def candidate(request, _selected_candidate):
+    request.node._reference_declared = _selected_candidate.source == "reference"
+    return _selected_candidate
 
 
 @pytest.fixture(scope="session")

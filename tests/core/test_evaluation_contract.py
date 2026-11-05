@@ -215,3 +215,41 @@ def test_probe(candidate): candidate(1)
         json.loads((suite.path / "dummy-candidate-report.json").read_text())["status"]
         == "ALL_SKIP"
     )
+
+
+@pytest.mark.parametrize("outcome", ["skip", "xfail"])
+def test_unadapted_reference_skip_cannot_hide_missing_declaration(suite, outcome):
+    suite.makepyfile(f"""
+import pytest
+def test_valid(candidate):
+    assert candidate(1) == 2
+def test_unadapted():
+    pytest.{outcome}("no reference declared")
+""")
+    result = suite.runpytest_subprocess("--ref-as-candidate")
+    result.assert_outcomes(passed=1, failed=1)
+    result.stdout.fnmatch_lines(["*No predefined reference selected*"])
+
+
+def test_dummy_benchmark_continues_after_skipped_input(suite):
+    directory = suite.path / "benchmark"
+    directory.mkdir()
+    (directory / "test_add_benchmark.py").write_text(
+        (ROOT / "benchmark/test_add_benchmark.py").read_text() + """
+import sys
+@pytest.fixture(autouse=True)
+def fake_inputs(monkeypatch):
+    def inputs(case, device):
+        if case.dtype == "uint8":
+            pytest.skip("dtype unavailable")
+        return (1,)
+    monkeypatch.setattr(sys.modules[__name__], "make_inputs", inputs)
+"""
+    )
+    suite.runpytest_subprocess(
+        "benchmark/test_add_benchmark.py", "--dummy-candidate", "add"
+    ).assert_outcomes(passed=1)
+    report = json.loads((suite.path / "dummy-candidate-report.json").read_text())
+    assert report["status"] == "PASSED"
+    assert len(report["records"]) == 8
+    assert [row["status"] for row in report["records"]] == ["REACHED", "SKIP"] * 4
