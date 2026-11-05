@@ -33,7 +33,10 @@ python -m pytest benchmark/test_add_benchmark.py -m add --override add:/path/to/
 ```
 
 Append `:FUNCTION` to the override specification if the candidate entry point
-has another name. Without a backend selection, the default device is CUDA. Use `--reference FILE:FUNCTION`
+has another name. The runtime reads `GEMS_VENDOR`, otherwise detects the accelerator automatically.
+Use `--device cpu` to run CPU checks or an indexed device such as `npu:1` to
+select a device explicitly. Unknown vendors and conflicting accelerator device
+types raise an error. Use `--reference FILE:FUNCTION`
 to additionally check an independent oracle with the same signature. This
 compares the selected reference and candidate against the supplied oracle.
 Correctness and `--ref-as-candidate` select the reference by operator and
@@ -58,8 +61,9 @@ For compatibility with FlagGems-sglang, `--override` accepts repeated
 `--record json --output FILE` enables result JSON. Case listing always
 writes JSON. Profile, dummy, reference mode and listing are mutually
 exclusive. Duplicate or unknown benchmark case IDs fail explicitly.
-When `--device` is omitted, the runner uses `DNN_VENDOR` to select the
-Torch device type; explicit device selection remains available.
+Tests, benchmark and profile use the shared `runtime.resolve_device` result.
+Set `GEMS_VENDOR` for an explicit vendor selection or leave it unset for
+automatic detection. `--device` preserves explicit device selection.
 
 ### Profile one candidate case
 

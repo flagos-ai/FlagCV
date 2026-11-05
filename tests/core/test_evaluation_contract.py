@@ -13,7 +13,8 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.fixture
 def suite(pytester, monkeypatch):
     monkeypatch.setenv("PYTHONPATH", str(ROOT))
-    monkeypatch.delenv("DNN_VENDOR", raising=False)
+    monkeypatch.delenv("GEMS_VENDOR", raising=False)
+    pytester.makeini("[pytest]\naddopts = --device cpu")
     pytester.makeconftest(
         (ROOT / "conftest.py").read_text()
         + "\nfrom reference import _DEFAULT_REFERENCES\n"

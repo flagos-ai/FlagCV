@@ -2,12 +2,12 @@
 
 import importlib.util
 import json
-import os
 from pathlib import Path
 
 import pytest
 
 from reference import get_reference
+from runtime import resolve_device
 
 OPERATORS = ("add",)
 
@@ -29,7 +29,9 @@ def pytest_addhooks(pluginmanager):
 def pytest_addoption(parser):
     group = parser.getgroup("FlagCV evaluation")
     group.addoption(
-        "--device", default=None, help="Optional Torch device; otherwise use DNN_VENDOR"
+        "--device",
+        default=None,
+        help="Optional device override; otherwise detect via GEMS_VENDOR/runtime",
     )
     group.addoption("--level", choices=["core"], default="core")
     group.addoption(
@@ -50,13 +52,6 @@ def pytest_addoption(parser):
 
 
 def pytest_configure(config):
-    if config.option.device is None:
-        config.option.device = {
-            "ascend": "npu",
-            "mthreads": "musa",
-            "cambricon": "mlu",
-        }.get(os.environ.get("DNN_VENDOR"), "cuda")
-
     def enabled(name):
         return bool(config.getoption(name))
 
@@ -229,7 +224,10 @@ class Evaluation:
                 {
                     "operator": dummy_mode,
                     "phase": (
-                        "benchmark" if "benchmark" in item.path.parts else "correctness"
+                        "benchmark"
+                        if (Path(__file__).resolve().parent / "benchmark")
+                        in item.path.parents
+                        else "correctness"
                     ),
                     "nodeid": item.nodeid,
                     "status": "SKIP" if report.skipped else "PRE_CALL_ERROR",
@@ -255,7 +253,10 @@ class Evaluation:
                 {
                     "operator": dummy_mode,
                     "phase": (
-                        "benchmark" if "benchmark" in item.path.parts else "correctness"
+                        "benchmark"
+                        if (Path(__file__).resolve().parent / "benchmark")
+                        in item.path.parents
+                        else "correctness"
                     ),
                     "nodeid": item.nodeid,
                     "status": "POST_CALL_ERROR",
@@ -282,7 +283,8 @@ class Evaluation:
             )
         )
         requires_timing = (
-            self.config.getoption("ref_as_candidate") and "benchmark" in item.path.parts
+            self.config.getoption("ref_as_candidate")
+            and (Path(__file__).resolve().parent / "benchmark") in item.path.parents
         )
         if (
             validating
@@ -386,6 +388,16 @@ def write_json(path, data):
 def _selected_candidate(request):
     config = request.config
     state = config._evaluation
+    if not any(
+        config.getoption(name)
+        for name in ("dummy_candidate", "ref_as_candidate", "override")
+    ):
+        pytest.skip(
+            "Select a candidate with --override, --dummy-candidate or --ref-as-candidate"
+        )
+    runtime = resolve_device(config.getoption("device"))
+    config._flagcv_runtime = runtime
+    config.option.device = runtime.device
     if config.getoption("dummy_candidate"):
         return state.probe()
     if config.getoption("ref_as_candidate"):

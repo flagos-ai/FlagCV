@@ -2,7 +2,6 @@
 
 import json
 import math
-import os
 from contextlib import nullcontext
 
 import pytest
@@ -58,12 +57,7 @@ def _profile_case(config, case_id, candidate, warmup_inputs, capture_inputs):
     import torch
 
     device = capture_inputs[0].device
-    backend = os.environ.get("DNN_VENDOR") or {
-        "cuda": "nvidia",
-        "npu": "ascend",
-        "musa": "mthreads",
-        "mlu": "cambricon",
-    }.get(device.type, device.type)
+    backend = config._flagcv_runtime.vendor
     device_module = torch.get_device_module(device) if device.type != "cpu" else None
     with device_module.device(device) if device_module else nullcontext():
         for _ in range(config.getoption("profile_warmup")):
