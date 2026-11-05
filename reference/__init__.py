@@ -11,6 +11,6 @@ def get_reference(op_name, device):
     reference = _BACKEND_REFERENCES.get((op_name, device_type))
     if reference is None:
         reference = _DEFAULT_REFERENCES.get(op_name)
-    if reference is None:
-        raise LookupError(f"No reference defined for {op_name!r} on {device_type!r}")
+    if not callable(reference):
+        raise LookupError(f"No predefined reference for {op_name!r} on {device_type!r}")
     return reference

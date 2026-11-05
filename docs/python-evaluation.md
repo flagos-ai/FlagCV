@@ -25,15 +25,15 @@ backend's Triton benchmark helper.
 ```sh
 python -m pytest benchmark/test_add_benchmark.py -m add --level core --list-cases --output add-cases.json
 python -m pytest tests/test_add.py -m add --device cpu --ref-as-candidate
-python -m pytest tests/test_add.py benchmark/test_add_benchmark.py -m add --device cpu --dummy-candidate add
+python -m pytest tests/test_add.py benchmark/test_add_benchmark.py -m add --device cpu --dummy-candidate add --dummy-report add-dummy.json
 python -m pytest tests/test_add.py -m add --override add:/path/to/candidate.py
 python -m pytest benchmark/test_add_benchmark.py -m add --override add:/path/to/candidate.py \
   --case-id 'benchmark/test_add_benchmark.py::test_add_benchmark::core::uint8::3' --base-data /path/to/op_opencv_perf_baseline.json \
-  --output add-result.json
+  --record json --output add-result.json
 ```
 
 Append `:FUNCTION` to the override specification if the candidate entry point
-has another name. The default device is CUDA. Use `--reference FILE:FUNCTION`
+has another name. Without a backend selection, the default device is CUDA. Use `--reference FILE:FUNCTION`
 to additionally check an independent oracle with the same signature. This
 compares the selected reference and candidate against the supplied oracle.
 Correctness and `--ref-as-candidate` select the reference by operator and
@@ -42,8 +42,24 @@ When there is no backend-specific entry, the runner uses the operator's
 default reference.
 
 For this profile, baseline lookup requires an exact shape, dtype and
-OpenCV profile match. The runner reports `raw_speedup` as the baseline
-latency (`T_us`) divided by the measured candidate latency.
+OpenCV profile match. With `--record json`, benchmark output uses per-operator `details` and
+per-dtype `result` rows. `latency` is in milliseconds, and
+`raw_speedup` is baseline latency divided by candidate latency. The
+OpenCV-specific baseline fields retain their raw latency-ratio meaning.
+Correctness JSON records include per-test `candidate_calls`. Reference
+validation also records `reference_calls` and `reference_candidate_calls`.
+Dummy evidence is written separately to `--dummy-report` (default
+`dummy-candidate-report.json`) using `flaggems.dummy-candidate/v1`.
+Each correctness case and benchmark workload must reach the candidate.
+Timing results identify `candidate_source` only after the timer invokes it.
+
+For compatibility with FlagGems-sglang, `--override` accepts repeated
+`OP:FILE[:FUNCTION]` arguments and the `OP=FILE[:FUNCTION]` spelling.
+`--record json --output FILE` enables result JSON. Case listing always
+writes JSON. Profile, dummy, reference mode and listing are mutually
+exclusive. Duplicate or unknown benchmark case IDs fail explicitly.
+When `--device` is omitted, the runner uses `DNN_VENDOR` to select the
+Torch device type; explicit device selection remains available.
 
 ### Profile one candidate case
 

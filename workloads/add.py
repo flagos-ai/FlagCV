@@ -33,6 +33,9 @@ CASES = tuple(Case(shape, dtype) for shape in SHAPES for dtype in DTYPES)
 def make_inputs(case, device):
     import torch
 
+    if str(device).split(":", 1)[0] == "npu":
+        import torch_npu  # noqa: F401
+
     generator = torch.Generator(device="cpu").manual_seed(0)
     if case.dtype == "uint8":
         inputs = [
