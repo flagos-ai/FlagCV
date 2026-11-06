@@ -1,0 +1,15 @@
+{
+  "profile": "flagcv-flagtree-rocm7.2.4",
+  "base_image": "rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0@sha256:4449f856653602317e4101a76fce599c7fcd58ccec2e539951fce5f73083179e",
+  "rocm_release": "7.2.4",
+  "hip_build": "7.2.53211",
+  "python": "3.12.3",
+  "torch": "2.10.0+rocm7.2.4.lw.git3d3aa833",
+  "compiler_distribution": "flagtree",
+  "compiler_version": "0.7.0+amd3.6",
+  "triton_version": "3.6.0",
+  "wheel_sha256": "56f14b2f5eba88f406fec7541adc61a8abf540aa731b12cb3e9970fbeb3fd43e",
+  "cmake": "3.31.10",
+  "qualified_architecture": "gfx1201",
+  "wave_size": 32
+}
