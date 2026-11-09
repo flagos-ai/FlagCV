@@ -37,6 +37,7 @@ class Handle {
   const std::string& backend() const;
 
  private:
+  friend struct HandleAccess;  // internal: lets the runtime reach State
   struct State;
   std::unique_ptr<State> state_;
 };

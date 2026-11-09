@@ -51,11 +51,27 @@ LoweredOp lower_bitwise(const GpuMat& src1, const GpuMat& src2,
   op.add_image(s2);
   op.add_image(d);
   if (!mask.empty()) op.add_image(to_spec(mask, "mask"));
-  op.add_param("mode", mode);
-  op.add_param("has_mask", mask.empty() ? 0 : 1);
+  op.add_hinted_param("width", s1.width);
+  op.add_param("height", s1.height);
+  /* ...每个操作数的 row_stride 用 add_hinted_param，顺序与 kernel 参数一致 */
+  op.add_constexpr("channels", s1.channels);
+  op.add_constexpr("mode", mode);
+  op.add_constexpr("has_mask", mask.empty() ? 0 : 1);
   return op;
 }
 ```
+
+参数分三种，决定它怎么进 kernel cache key：
+
+- `add_constexpr`：编译期常量，值进 key，每个新值编一个 kernel。只给模式、通道数这类小的封闭集合用。
+- `add_param`：运行期参数，只有类型（i32/i64）进 key，换值不重编。图像尺寸走这里。
+- `add_hinted_param`：运行期参数，另外按"能否被 16 整除"特化，和 Triton 自己 JIT 的做法一致。
+  给 row stride 和"界定向量化那一维"的尺寸（通常是 width）用：编译器靠它证明行首对齐、mask 按 16 个
+  元素一组不变，才会生成向量化访存。height 这类不影响向量化的尺寸别加，否则只会白白多出变体。
+
+kernel 的参数表必须严格是：每个图像一个 `<name>_ptr`（按 `add_image` 顺序），然后按顺序是 lowering 的
+全部参数，最后是平台 `compiler.py` 填的调优 constexpr（`BLOCK_X` 等）。编译进程会逐个核对名字，对不上
+直接报错，而不是错位 launch。
 
 校验放这层，不放入口函数。`bitwise_and/or/xor/not` 是四个入口共一个族，校验写在入口
 里早晚会互相漂移。

@@ -19,6 +19,9 @@ option(FLAGCV_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
 set(FLAGCV_BACKENDS "nvidia"
     CACHE STRING "Semicolon-separated backend plugins to build")
 
+# Plugins land in lib/flagcv/ in the build tree, mirroring the install tree.
+set(FLAGCV_PLUGIN_OUTPUT_DIR "${PROJECT_BINARY_DIR}/lib/flagcv")
+
 function(flagcv_enable_warnings target)
   target_compile_options(${target} PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic>)

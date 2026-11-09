@@ -1,4 +1,10 @@
 {
   "platform": "common",
-  "kernels": []
+  "kernels": [
+    {
+      "name": "flip",
+      "source": "common/flip.py",
+      "function": "flip_kernel"
+    }
+  ]
 }
