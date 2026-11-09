@@ -1,11 +1,13 @@
-# NVIDIA plugin: a dlopen'd module linking only the CUDA driver API. The core
-# library finds it next to itself under flagcv/, in both the build tree and
-# the install tree.
-find_package(CUDAToolkit REQUIRED)
+# Copyright 2026 FlagOS Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+# Nvidia plugin: a dlopen'd module that links only this platform's SDK.
+# The core never links it (docs/architecture.md, "Plugin boundary").
 
 add_library(flagcv_nvidia MODULE backend.cpp)
-target_include_directories(flagcv_nvidia PRIVATE ${PROJECT_SOURCE_DIR})
+find_package(CUDAToolkit REQUIRED)
 target_link_libraries(flagcv_nvidia PRIVATE CUDA::cuda_driver)
+target_include_directories(flagcv_nvidia PRIVATE ${PROJECT_SOURCE_DIR})
 target_compile_features(flagcv_nvidia PRIVATE cxx_std_17)
 set_target_properties(flagcv_nvidia PROPERTIES
   CXX_VISIBILITY_PRESET hidden

@@ -49,9 +49,9 @@ const char* depth_name(Depth depth) {
  * unloading a vendor runtime while its threads or atexit handlers are live is
  * a common source of shutdown crashes, and the mapping is small.
  */
-const FlagcvBackendV1& load_plugin(const std::string& backend) {
+const FlagcvBackendV2& load_plugin(const std::string& backend) {
   static std::mutex mutex;
-  static std::map<std::string, const FlagcvBackendV1*> plugins;
+  static std::map<std::string, const FlagcvBackendV2*> plugins;
   std::lock_guard<std::mutex> lock(mutex);
   auto it = plugins.find(backend);
   if (it != plugins.end()) return *it->second;
@@ -71,7 +71,7 @@ const FlagcvBackendV1& load_plugin(const std::string& backend) {
       ::dlsym(library, FLAGCV_BACKEND_ENTRY));
   if (entry == nullptr)
     throw Error("flagcv: " + path + " does not export " FLAGCV_BACKEND_ENTRY);
-  const FlagcvBackendV1* table = entry();
+  const FlagcvBackendV2* table = entry();
   if (table == nullptr || table->version != FLAGCV_BACKEND_VERSION) {
     throw Error("flagcv: " + path +
                 " was built against a different plugin interface version");
@@ -138,7 +138,7 @@ bool divisible16(const LoweredOp::Param& param) {
 struct Handle::State {
   std::string backend;
   int device = 0;
-  const FlagcvBackendV1* plugin = nullptr;
+  const FlagcvBackendV2* plugin = nullptr;
   void* context = nullptr;
   std::string device_id;
   std::string target;
@@ -162,7 +162,7 @@ Handle::Handle(const std::string& backend, int device) : state_(new State) {
   state_->backend = backend;
   state_->device = device;
   state_->plugin = &load_plugin(backend);
-  const FlagcvBackendV1& plugin = *state_->plugin;
+  const FlagcvBackendV2& plugin = *state_->plugin;
   if (plugin.create_context(device, &state_->context) != 0) {
     state_->plugin = nullptr;  // nothing to release
     throw Error(std::string("flagcv: ") + plugin.last_error());
@@ -214,7 +214,7 @@ ResolvedKernel resolve_kernel(const std::string& backend,
 void launch(Handle& handle, const LoweredOp& op,
             const std::vector<void*>& pointers, Stream stream) {
   auto& state = HandleAccess::state(handle);
-  const FlagcvBackendV1& plugin = *state.plugin;
+  const FlagcvBackendV2& plugin = *state.plugin;
   if (pointers.size() != op.images.size()) {
     throw Error("flagcv: launch got " + std::to_string(pointers.size()) +
                 " pointers for " + std::to_string(op.images.size()) +
@@ -299,9 +299,13 @@ void launch(Handle& handle, const LoweredOp& op,
         loaded.grid[d].product.push_back(name.as_string());
       loaded.grid[d].block = grid[d].at("block").as_int();
     }
+    const unsigned int flags =
+        reply.has("load_flags")
+            ? static_cast<unsigned int>(reply.at("load_flags").as_int())
+            : 0u;
     if (plugin.load(state.context, binary.data(), binary.size(),
                     reply.at("function").as_string().c_str(),
-                    loaded.shared_bytes, &loaded.kernel) != 0) {
+                    loaded.shared_bytes, flags, &loaded.kernel) != 0) {
       throw Error(plugin.last_error());
     }
     it = state.kernels.emplace(full_key, loaded).first;
@@ -334,34 +338,46 @@ void launch(Handle& handle, const LoweredOp& op,
   }
 
   // Native launch convention: one pointer per kernel argument, to its value.
-  // Triton kernels end with two scratch pointers; the compiler rejects any
-  // kernel that needs real scratch memory, so null is correct here.
+  // `kinds` records each argument's width in the same order: 0 for an 8-byte
+  // value (device pointer or i64), 1 for a 4-byte one (i32). Only Ascend's
+  // packed launch needs it; the others launch from the pointer array alone.
   std::vector<std::uint64_t> device_ptrs(pointers.size());
   std::vector<std::int64_t> wide;
   std::vector<std::int32_t> narrow;
   wide.reserve(op.params.size());
   narrow.reserve(op.params.size());
   std::vector<void*> args;
+  std::vector<unsigned int> kinds;
   for (std::size_t i = 0; i < pointers.size(); ++i) {
     device_ptrs[i] = reinterpret_cast<std::uintptr_t>(pointers[i]);
     args.push_back(&device_ptrs[i]);
+    kinds.push_back(0);
   }
   for (const auto& param : op.params) {
-    if (param.compile_time) continue;
+    if (param.compile_time) continue;  // baked into the binary, not an argument
     if (fits_i32(param.value)) {
       narrow.push_back(static_cast<std::int32_t>(param.value));
       args.push_back(&narrow.back());
+      kinds.push_back(1);
     } else {
       wide.push_back(param.value);
       args.push_back(&wide.back());
+      kinds.push_back(0);
     }
   }
-  std::uint64_t global_scratch = 0, profile_scratch = 0;
-  args.push_back(&global_scratch);
-  args.push_back(&profile_scratch);
+  if (plugin.appends_scratch_args) {
+    // Triton's ABI ends with two scratch pointers. The compiler rejects any
+    // kernel that needs real scratch memory, so null is correct here.
+    std::uint64_t global_scratch = 0, profile_scratch = 0;
+    args.push_back(&global_scratch);
+    args.push_back(&profile_scratch);
+    kinds.push_back(0);
+    kinds.push_back(0);
+  }
 
   if (plugin.launch(state.context, kernel.kernel, grid, kernel.block_threads,
-                    kernel.shared_bytes, stream, args.data()) != 0) {
+                    kernel.shared_bytes, stream, args.data(), kinds.data(),
+                    static_cast<unsigned int>(args.size())) != 0) {
     throw Error(plugin.last_error());
   }
 }

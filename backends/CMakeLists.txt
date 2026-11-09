@@ -4,6 +4,9 @@
 # Each platform in FLAGCV_BACKENDS is built as a separate plugin. A platform
 # owns its SDK discovery inside its own directory, so adding one does not
 # touch this file beyond the list in the root CMakeLists.txt.
+# Shared, header-only plugin helpers.
+add_subdirectory(common)
+
 set(_flagcv_backends ${FLAGCV_BACKENDS})
 list(REMOVE_DUPLICATES _flagcv_backends)
 

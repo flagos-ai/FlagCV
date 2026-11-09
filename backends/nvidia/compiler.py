@@ -16,7 +16,8 @@ on gets checked here, before compiling, where the operand layout is fully
 known.
 """
 
-from flagcv_codegen.triton_build import DEPTH_SIZE, compile_kernel, digest
+from flagcv_codegen.providers import compile_with_plan
+from flagcv_codegen.triton_build import compile_kernel, digest
 
 PROVIDER = "nvidia"
 
@@ -32,28 +33,6 @@ def identify():
     return digest(__file__, PROVIDER)
 
 
-def _plan_flip(request):
-    # Each program moves a BLOCK_Y x BLOCK_X tile of channel values. Narrow
-    # depths get wider rows so every program still moves ~2-4 KiB.
-    size = DEPTH_SIZE[request["images"][0]["depth"]]
-    block_x = {1: 1024, 2: 512, 4: 256, 8: 128}[size]
-    block_y = 4
-    grid = [
-        {"product": ["width", "CHANNELS"], "block": block_x},
-        {"product": ["height"], "block": block_y},
-        1,
-    ]
-    return {"BLOCK_X": block_x, "BLOCK_Y": block_y}, 4, grid
-
-
-_PLANS = {"flip": _plan_flip}
-
-
 def compile(request):
-    plan = _PLANS.get(request["kernel"])
-    if plan is None:
-        raise ValueError(
-            f"nvidia provider has no launch plan for kernel {request['kernel']!r}"
-        )
-    tuning, num_warps, grid = plan(request)
+    tuning, num_warps, grid, _ = compile_with_plan(request)
     return compile_kernel(request, tuning, num_warps, grid)

@@ -113,3 +113,32 @@ Plugins include `backends/backend.hpp` and nothing else from the tree. They
 receive operand layouts and params as plain data, so adding a field to a core
 struct is not an ABI break. A plugin that includes a core internal header has
 broken the contract.
+
+### Backends
+
+| `FLAGCV_BACKENDS` | SDK | Artifact | Warp | Note |
+|---|---|---|---|---|
+| `nvidia` | `cuda.h` | `.cubin` | 32 | |
+| `iluvatar` | CoreX `cuda.h` | `.cubin` | 64 | needs `CUDAToolkit_ROOT` pointed at CoreX |
+| `hygon` | `hip/hip_runtime.h` | `.hsaco` | 64 | |
+| `mthreads` | `musa.h` | `.mubin` | 32 | Triton backend name is `mtgpu` |
+| `thead` | `hggc.h` | `.hgbin` | 32 | Triton backend name is `PPU` |
+| `ascend` | `acl/acl.h`, `rt.h` | `.npubin` | 1 | runtime registration, packed args |
+
+Five of them share one implementation, `backends/common/driver_backend.hpp`:
+their driver APIs have the CUDA shape (init, primary context, push/pop, load
+module from bytes, get function, launch with an argument array), so a plugin
+is just an `Api` struct naming its own calls. Ascend does not have that shape
+— it registers the binary with the runtime and passes a packed argument
+buffer — so it implements the table itself and sets
+`appends_scratch_args = 0`, because Triton's Ascend ABI has no trailing
+scratch pointers.
+
+The plugin also reports the compile target (`cuda:90:32`, `hip:gfx942:64`,
+...) and the Triton backend name, which is what lets the compiler process
+build for a device it never touches. The platform facts the compiler needs —
+artifact format, Triton backend name, element-block and warp limits — are in
+`compiler/flagcv_codegen/platform.py`.
+
+Only the NVIDIA backend has been compiled and run; the other five follow the
+same contract but have not been built against their SDKs here.

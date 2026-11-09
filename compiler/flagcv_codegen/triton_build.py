@@ -20,6 +20,8 @@ from pathlib import Path
 import triton
 from triton.backends.compiler import GPUTarget
 
+from flagcv_codegen import platform as platforms
+
 # Kernel pointer element types, keyed by the depth names the runtime sends.
 DEPTH_TO_TRITON = {
     "8U": "u8",
@@ -127,13 +129,14 @@ def _check_arguments(fn, request, tuning):
         )
 
 
-def compile_kernel(request, tuning, num_warps, grid, num_stages=1, binary="cubin"):
+def compile_kernel(request, tuning, num_warps, grid, num_stages=1):
     """Compile the requested kernel and write its binary into the FlagCV cache.
 
     `tuning` holds the provider's constexpr choices (block sizes); `grid` is the
     launch-grid spec returned to the runtime, which evaluates it against the
     runtime parameter values it never sent here.
     """
+    facts = platforms.platform(request["backend"])
     fn = load_jit_function(request["source"], request["function"])
     _check_arguments(fn, request, tuning)
 
@@ -177,13 +180,21 @@ def compile_kernel(request, tuning, num_warps, grid, num_stages=1, binary="cubin
                 "which is not supported"
             )
 
+    # The image Triton emits is platform specific: cubin on CUDA-shaped
+    # vendors, hsaco/mubin/hgbin on the others, npubin on Ascend.
+    image = compiled.asm.get(facts["binary"])
+    if image is None:
+        raise RuntimeError(
+            f"compiled kernel has no {facts['binary']!r} image; "
+            f"available: {sorted(compiled.asm)}"
+        )
     artifact_dir = cache_dir() / "artifacts" / compiled.hash
-    artifact = artifact_dir / f"{metadata.name}.{binary}"
+    artifact = artifact_dir / f"{metadata.name}.{facts['extension']}"
     if not artifact.is_file():
         artifact_dir.mkdir(parents=True, exist_ok=True)
         # Write-then-rename so a concurrent process never loads a torn binary.
         with tempfile.NamedTemporaryFile(dir=artifact_dir, delete=False) as tmp:
-            tmp.write(compiled.asm[binary])
+            tmp.write(image)
         os.chmod(tmp.name, 0o644)
         os.replace(tmp.name, artifact)
     return {
@@ -191,5 +202,6 @@ def compile_kernel(request, tuning, num_warps, grid, num_stages=1, binary="cubin
         "function": metadata.name,
         "num_warps": metadata.num_warps,
         "shared": metadata.shared,
+        "load_flags": facts.get("load_flags", 0),
         "grid": grid,
     }
