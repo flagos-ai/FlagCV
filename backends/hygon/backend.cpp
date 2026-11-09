@@ -69,7 +69,10 @@ struct HygonApi {
     hipDeviceProp_t props{};
     if (hipGetDeviceProperties(&props, device) != hipSuccess)
       return hipErrorUnknown;
-    out = "hip:" + std::string(props.gcnArchName) + ":" +
+    // gcnArchName carries target features ("gfx936:sramecc+:xnack-"); Triton
+    // takes the bare architecture, as its own HIP driver does.
+    std::string arch = props.gcnArchName;
+    out = "hip:" + arch.substr(0, arch.find(':')) + ":" +
           std::to_string(props.warpSize);
     return hipSuccess;
   }
@@ -86,10 +89,11 @@ struct HygonApi {
   }
 
   static int shared_optin_limit(Device device) {
-    int limit = 0;
-    hipDeviceGetAttribute(
-        &limit, hipDeviceAttributeMaxSharedMemoryPerBlockOptin, device);
-    return limit;
+    // DTK's HIP has no MaxSharedMemoryPerBlockOptin attribute and its legacy
+    // hipDeviceProp_t lacks the field; only the v2 properties carry it.
+    hipDeviceProp_t_v2 props{};
+    if (hipGetDeviceProperties_v2(&props, device) != hipSuccess) return 0;
+    return static_cast<int>(props.sharedMemPerBlockOptin);
   }
   /* HIP exposes the opt-in limit directly; keep the CUDA convention. */
   static unsigned shared_optin_threshold() { return 48u * 1024u; }
