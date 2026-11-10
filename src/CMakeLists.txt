@@ -5,6 +5,7 @@
 # core/ or imgproc/, plus its lowering under lowering/.
 add_library(flagcv
   image/gpumat.cpp
+  runtime/backend_plugin.cpp
   runtime/runtime.cpp)
 
 target_include_directories(flagcv
@@ -15,6 +16,9 @@ target_include_directories(flagcv
     ${PROJECT_SOURCE_DIR})
 
 target_compile_features(flagcv PUBLIC cxx_std_17)
+target_link_libraries(flagcv PRIVATE ${CMAKE_DL_LIBS})
+target_compile_definitions(flagcv PRIVATE
+  FLAGCV_BACKEND_INSTALL_DIR="${CMAKE_INSTALL_FULL_LIBDIR}/flagcv/backends")
 flagcv_enable_warnings(flagcv)
 
 install(TARGETS flagcv EXPORT FlagCVTargets)

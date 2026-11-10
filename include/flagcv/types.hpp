@@ -3,6 +3,7 @@
 #ifndef FLAGCV_TYPES_HPP_
 #define FLAGCV_TYPES_HPP_
 
+#include <cstddef>
 #include <cstdint>
 
 namespace flagcv {
@@ -40,9 +41,9 @@ enum class Border {
 };
 
 /*
- * An opaque native backend stream: a cudaStream_t on NVIDIA, an aclrtStream
- * on Ascend. A null value means the backend's default stream. The caller owns
- * it and keeps it alive until the enqueued work completes.
+ * An opaque native backend stream: a cudaStream_t on NVIDIA, a hipStream_t
+ * on AMD, an aclrtStream on Ascend. A null value means the default stream.
+ * The caller owns it and keeps it alive until the enqueued work completes.
  */
 using Stream = void*;
 
