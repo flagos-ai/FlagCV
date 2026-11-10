@@ -322,8 +322,16 @@ class Evaluation:
     def pytest_sessionfinish(self, session, exitstatus):
         config = self.config
         if config.getoption("dummy_candidate"):
+            requested = set(config.getoption("case_id"))
+            reached = {
+                record["case_id"]
+                for record in self.records
+                if record["status"] == "REACHED" and "case_id" in record
+            }
+            unreached = sorted(requested - reached)
             successful = (
-                any(record["status"] == "REACHED" for record in self.records)
+                not unreached
+                and any(record["status"] == "REACHED" for record in self.records)
                 and all(
                     record["status"] in {"REACHED", "SKIP"} for record in self.records
                 )
@@ -338,6 +346,13 @@ class Evaluation:
                 status = "ALL_SKIP"
             if not successful and session.exitstatus in (0, 5):
                 session.exitstatus = pytest.ExitCode.TESTS_FAILED
+            if unreached:
+                reporter = config.pluginmanager.get_plugin("terminalreporter")
+                if reporter:
+                    reporter.write_line(
+                        "FlagCV dummy candidate did not reach selected cases: "
+                        + ", ".join(unreached)
+                    )
             write_json(
                 config.getoption("dummy_report") or Path("dummy-candidate-report.json"),
                 {
