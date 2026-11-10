@@ -9,6 +9,12 @@ its own callable signature, inputs, and reference.
 The Python Definition describes the candidate interface. The C++ integration
 has its own CTest entry points.
 
+Register an operator with `definitions/OP.json` and mark its evaluation tests
+and benchmarks with `@pytest.mark.OP`. Define its default reference as
+`reference/OP.py` with a callable named `reference`. The runner uses the marker
+to select the reference or the matching `--override` entry. Dummy mode selects
+only the operator named by `--dummy-candidate`.
+
 ## Example: add
 
 The `add` profile matches
