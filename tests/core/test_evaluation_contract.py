@@ -309,7 +309,8 @@ def test_unadapted():
     result.stdout.fnmatch_lines(["*No predefined reference selected*"])
 
 
-def test_dummy_benchmark_continues_after_skipped_input(suite):
+@pytest.fixture
+def dummy_benchmark(suite):
     directory = suite.path / "benchmark"
     directory.mkdir()
     (directory / "test_add_benchmark.py").write_text(
@@ -324,6 +325,11 @@ def fake_inputs(monkeypatch):
     monkeypatch.setattr(sys.modules[__name__], "make_inputs", inputs)
 """
     )
+    return suite
+
+
+def test_dummy_benchmark_continues_after_skipped_input(dummy_benchmark):
+    suite = dummy_benchmark
     suite.runpytest_subprocess(
         "benchmark/test_add_benchmark.py", "--dummy-candidate", "add"
     ).assert_outcomes(passed=1)
@@ -331,6 +337,41 @@ def fake_inputs(monkeypatch):
     assert report["status"] == "PASSED"
     assert len(report["records"]) == 8
     assert [row["status"] for row in report["records"]] == ["REACHED", "SKIP"] * 4
+
+
+@pytest.mark.parametrize(
+    ("second_case", "second_status", "exit_code"),
+    [
+        ("uint8::1", "SKIP", pytest.ExitCode.TESTS_FAILED),
+        ("float32::2", "REACHED", pytest.ExitCode.OK),
+    ],
+)
+def test_dummy_benchmark_requires_all_selected_case_hits(
+    dummy_benchmark, second_case, second_status, exit_code
+):
+    suite = dummy_benchmark
+    nodeid = "benchmark/test_add_benchmark.py::test_add_benchmark::core"
+    selected = [f"{nodeid}::float32::0", f"{nodeid}::{second_case}"]
+    result = suite.runpytest_subprocess(
+        "benchmark/test_add_benchmark.py",
+        "--dummy-candidate",
+        "add",
+        "--case-id",
+        selected[0],
+        "--case-id",
+        selected[1],
+    )
+    assert result.ret == exit_code
+    report = json.loads((suite.path / "dummy-candidate-report.json").read_text())
+    assert report["status"] == (
+        "PASSED" if exit_code == pytest.ExitCode.OK else "FAILED"
+    )
+    assert [
+        (row["case_id"], row["status"], row["calls"]) for row in report["records"]
+    ] == [
+        (selected[0], "REACHED", 1),
+        (selected[1], second_status, int(second_status == "REACHED")),
+    ]
 
 
 @pytest.mark.parametrize("outcome", ["skip", "xfail"])
