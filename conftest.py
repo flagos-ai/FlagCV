@@ -9,7 +9,20 @@ import pytest
 from reference import get_reference
 from runtime import resolve_device
 
-OPERATORS = ("add",)
+OPERATORS = tuple(
+    sorted(path.stem for path in Path(__file__).with_name("definitions").glob("*.json"))
+)
+
+
+def _test_operator(item):
+    matches = {mark.name for mark in item.iter_markers()} & set(OPERATORS)
+    if len(matches) > 1:
+        raise pytest.UsageError(f"Multiple operator markers on {item.nodeid}")
+    if matches:
+        return next(iter(matches))
+    if len(OPERATORS) == 1:
+        return OPERATORS[0]
+    return None
 
 
 class DummyReached(Exception):
@@ -58,7 +71,8 @@ def pytest_configure(config):
     modes = ("override", "dummy_candidate", "ref_as_candidate", "list_cases")
     if sum(enabled(mode) for mode in modes) > 1:
         raise pytest.UsageError(
-            "Choose one of --override, --dummy-candidate, --ref-as-candidate or --list-cases"
+            "Choose one of --override, --dummy-candidate, "
+            "--ref-as-candidate or --list-cases"
         )
     if enabled("dummy_report") and not enabled("dummy_candidate"):
         raise pytest.UsageError("--dummy-report requires --dummy-candidate")
@@ -95,6 +109,8 @@ def pytest_configure(config):
             raise pytest.UsageError(
                 "Candidate validation requires execution without xdist"
             )
+    for operator in OPERATORS:
+        config.addinivalue_line("markers", f"{operator}: FlagCV operator evaluation")
     config._evaluation = Evaluation(config)
     config.pluginmanager.register(config._evaluation, "flagcv-evaluation")
 
@@ -301,10 +317,13 @@ class Evaluation:
                     and record["phase"] == "correctness"
                 ):
                     record["status"] = "POST_CALL_ERROR"
+        operator = getattr(item, "_candidate_operator", None)
+        if operator is None and len(OPERATORS) == 1:
+            operator = OPERATORS[0]
         result = {
             "result": report.outcome,
             "reason": str(report.longrepr) if report.failed or report.skipped else None,
-            "candidate_calls": {"flagcv.add": self.calls},
+            "candidate_calls": {f"flagcv.{operator}": self.calls} if operator else {},
         }
         if self.config.getoption("ref_as_candidate"):
             result.update(
@@ -385,45 +404,54 @@ def write_json(path, data):
 
 
 @pytest.fixture(scope="session")
-def _selected_candidate(request):
+def _candidate_runtime(pytestconfig):
+    runtime = resolve_device(pytestconfig.getoption("device"))
+    pytestconfig._flagcv_runtime = runtime
+    pytestconfig.option.device = runtime.device
+    return runtime
+
+
+@pytest.fixture(scope="session")
+def _override_candidates(pytestconfig):
+    functions = {}
+    for override in pytestconfig.getoption("override"):
+        parts = override.replace("=", ":", 1).split(":")
+        if len(parts) not in (2, 3) or parts[0] not in OPERATORS or not all(parts):
+            raise pytest.UsageError("Expected --override OP:FILE[:FUNCTION]")
+        operator, path = parts[:2]
+        functions[operator] = _load_callable(
+            path, parts[2] if len(parts) == 3 else operator
+        )
+    return functions
+
+
+@pytest.fixture
+def candidate(request):
     config = request.config
-    state = config._evaluation
     if not any(
         config.getoption(name)
         for name in ("dummy_candidate", "ref_as_candidate", "override")
     ):
         pytest.skip(
-            "Select a candidate with --override, --dummy-candidate or --ref-as-candidate"
+            "Select a candidate with --override, --dummy-candidate "
+            "or --ref-as-candidate"
         )
-    runtime = resolve_device(config.getoption("device"))
-    config._flagcv_runtime = runtime
-    config.option.device = runtime.device
+    operator = _test_operator(request.node)
+    if operator is None:
+        raise pytest.UsageError(f"No operator marker on {request.node.nodeid}")
+    request.node._candidate_operator = operator
+    runtime = request.getfixturevalue("_candidate_runtime")
+    state = config._evaluation
     if config.getoption("dummy_candidate"):
         return state.probe()
     if config.getoption("ref_as_candidate"):
-        return state.observe(
-            get_reference("add", config.getoption("device")), "reference"
-        )
-    overrides = config.getoption("override")
-    if overrides:
-        functions = {}
-        for override in overrides:
-            parts = override.replace("=", ":", 1).split(":")
-            if len(parts) not in (2, 3) or parts[0] not in OPERATORS or not all(parts):
-                raise pytest.UsageError("Expected --override OP:FILE[:FUNCTION]")
-            functions[parts[0]] = _load_callable(
-                parts[1], parts[2] if len(parts) == 3 else parts[0]
-            )
-        return state.observe(functions["add"], "override")
-    pytest.skip(
-        "Select a candidate with --override, --dummy-candidate or --ref-as-candidate"
-    )
-
-
-@pytest.fixture
-def candidate(request, _selected_candidate):
-    request.node._reference_declared = _selected_candidate.source == "reference"
-    return _selected_candidate
+        reference = get_reference(operator, runtime.device)
+        request.node._reference_declared = True
+        return state.observe(reference, "reference")
+    function = request.getfixturevalue("_override_candidates").get(operator)
+    if function is None:
+        raise pytest.UsageError(f"No --override supplied for {operator!r}")
+    return state.observe(function, "override")
 
 
 @pytest.fixture(scope="session")
@@ -442,12 +470,17 @@ def emit(config, data):
 
 
 def pytest_collection_modifyitems(config, items):
-    if not config.getoption("profile_only"):
+    dummy_operator = config.getoption("dummy_candidate")
+    if dummy_operator:
+        selected = [item for item in items if _test_operator(item) == dummy_operator]
+    elif config.getoption("profile_only"):
+        benchmark_dir = Path(__file__).resolve().parent / "benchmark"
+        selected = [item for item in items if benchmark_dir in item.path.parents]
+        if not selected:
+            raise pytest.UsageError("--profile-only requires a benchmark test")
+    else:
         return
-    benchmark_dir = Path(__file__).resolve().parent / "benchmark"
-    selected = [item for item in items if benchmark_dir in item.path.parents]
-    if not selected:
-        raise pytest.UsageError("--profile-only requires a benchmark test")
     deselected = [item for item in items if item not in selected]
-    items[:] = selected
-    config.hook.pytest_deselected(items=deselected)
+    if deselected:
+        items[:] = selected
+        config.hook.pytest_deselected(items=deselected)

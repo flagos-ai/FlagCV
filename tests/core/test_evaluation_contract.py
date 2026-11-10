@@ -15,6 +15,8 @@ def suite(pytester, monkeypatch):
     monkeypatch.setenv("PYTHONPATH", str(ROOT))
     monkeypatch.delenv("GEMS_VENDOR", raising=False)
     pytester.makeini("[pytest]\naddopts = --device cpu")
+    definitions = pytester.mkdir("definitions")
+    (definitions / "add.json").write_text((ROOT / "definitions/add.json").read_text())
     pytester.makeconftest(
         (ROOT / "conftest.py").read_text()
         + "\nfrom reference import _DEFAULT_REFERENCES\n"
@@ -39,12 +41,86 @@ def test_probe(candidate, use_candidate):
 
 
 def test_reference_rejects_missing_declaration(suite):
-    with (suite.path / "conftest.py").open("a") as out:
-        out.write("\n_DEFAULT_REFERENCES.clear()\n")
-    suite.makepyfile("def test_probe(candidate): candidate(1)")
+    (suite.path / "definitions/missing.json").write_text('{"name": "missing"}')
+    suite.makepyfile("""
+import pytest
+@pytest.mark.missing
+def test_probe(candidate):
+    candidate(1)
+""")
     result = suite.runpytest_subprocess("--ref-as-candidate")
     result.assert_outcomes(errors=1)
     result.stdout.fnmatch_lines(["*No predefined reference*"])
+
+
+@pytest.fixture
+def two_operators(suite):
+    (suite.path / "definitions/subtract.json").write_text('{"name": "subtract"}')
+    reference_dir = suite.mkdir("reference")
+    for name in ("__init__.py", "add.py"):
+        (reference_dir / name).write_text((ROOT / "reference" / name).read_text())
+    (reference_dir / "subtract.py").write_text(
+        "def reference(value): return value - 1\n"
+    )
+    suite.makepyfile("""
+import pytest
+
+@pytest.mark.add
+def test_add(candidate):
+    if candidate.source == "dummy":
+        pytest.fail("Add should be deselected when probing subtract")
+    assert candidate(4) == 5
+
+@pytest.mark.subtract
+def test_subtract(candidate, pytestconfig, request):
+    if candidate.source == "dummy":
+        pytestconfig._evaluation.run_probe(candidate, lambda: (4,), request.node.nodeid)
+    else:
+        assert candidate(4) == 3
+""")
+    return suite
+
+
+@pytest.mark.parametrize("mode", ["reference", "override"])
+def test_candidate_dispatches_by_test_operator(two_operators, mode):
+    suite = two_operators
+    if mode == "reference":
+        args = ["--ref-as-candidate"]
+    else:
+        suite.makepyfile(implementations="""
+def add(value): return value + 1
+def subtract(value): return value - 1
+""")
+        args = [
+            "--override", "add:implementations.py",
+            "--override", "subtract:implementations.py",
+        ]
+    suite.runpytest_subprocess(
+        *args, "--record", "json", "--output", "out.json"
+    ).assert_outcomes(passed=2)
+    rows = json.loads((suite.path / "out.json").read_text())
+    calls = {
+        nodeid.rsplit("::", 1)[-1]: row["candidate_calls"]
+        for nodeid, row in rows.items()
+    }
+    assert calls == {
+        "test_add": {"flagcv.add": 1},
+        "test_subtract": {"flagcv.subtract": 1},
+    }
+
+
+def test_dummy_selects_only_requested_operator(two_operators):
+    suite = two_operators
+    suite.runpytest_subprocess(
+        "--dummy-candidate", "subtract", "--dummy-report", "dummy.json"
+    ).assert_outcomes(passed=1, deselected=1)
+    report = json.loads((suite.path / "dummy.json").read_text())
+    assert report["status"] == "PASSED"
+    (record,) = report["records"]
+    assert record["operator"] == "subtract"
+    assert record["nodeid"].endswith("::test_subtract")
+    assert record["status"] == "REACHED"
+    assert record["calls"] == 1
 
 
 def test_dummy_reports_individual_calls(suite):
@@ -118,8 +194,9 @@ def test_benchmark_rejects_timer_that_bypasses_candidate(suite):
 import pytest
 @pytest.fixture(autouse=True)
 def fake_timer(monkeypatch):
-    monkeypatch.setattr(__import__(__name__, fromlist=[""]), "make_inputs", lambda *a: (1,))
-    monkeypatch.setattr(__import__(__name__, fromlist=[""]), "measure_us", lambda *a: 1.0)
+    module = __import__(__name__, fromlist=[""])
+    monkeypatch.setattr(module, "make_inputs", lambda *a: (1,))
+    monkeypatch.setattr(module, "measure_us", lambda *a: 1.0)
 """
     )
     result = suite.runpytest_subprocess(
