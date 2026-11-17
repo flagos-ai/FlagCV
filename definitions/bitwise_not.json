@@ -1,0 +1,29 @@
+{
+  "api_version": "v6.0",
+  "name": "bitwise_not",
+  "requires_triton_kernel": true,
+  "description": "FlagOS #6619. OpenCV CUDA reference opencv_contrib@b67a855188a3d683813731010f6d39ac614733a4/modules/cudaarithm/src/cuda/bitwise_mat.cu. Compute the bitwise complement of src. The tensors are nonempty equally shaped contiguous single-channel HxW matrices of the same dtype (uint8), without a mask. Write every element of the independent preallocated destination and return it. Preserve the source tensors.",
+  "parameters": [
+    {
+      "name": "src",
+      "kind": "positional_or_keyword",
+      "required": true
+    },
+    {
+      "name": "dst",
+      "kind": "positional_or_keyword",
+      "required": true
+    }
+  ],
+  "outputs": [
+    "dst"
+  ],
+  "effects": {
+    "mutates": [
+      "dst"
+    ],
+    "returns_alias_of": {
+      "dst": "dst"
+    }
+  }
+}

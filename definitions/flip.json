@@ -1,0 +1,34 @@
+{
+  "api_version": "v6.0",
+  "name": "flip",
+  "requires_triton_kernel": true,
+  "description": "FlagOS #6620. OpenCV CUDA reference opencv_contrib@b67a855188a3d683813731010f6d39ac614733a4/modules/cudaarithm/src/core.cpp. Reverse rows if flip_code is zero, columns if it is positive, and both if it is negative. The tensors are nonempty equally shaped contiguous single-channel HxW matrices of the same dtype (float32 or uint8), without a mask. Write every element of the independent preallocated destination and return it. Preserve the source tensors.",
+  "parameters": [
+    {
+      "name": "src",
+      "kind": "positional_or_keyword",
+      "required": true
+    },
+    {
+      "name": "dst",
+      "kind": "positional_or_keyword",
+      "required": true
+    },
+    {
+      "name": "flip_code",
+      "kind": "positional_or_keyword",
+      "required": true
+    }
+  ],
+  "outputs": [
+    "dst"
+  ],
+  "effects": {
+    "mutates": [
+      "dst"
+    ],
+    "returns_alias_of": {
+      "dst": "dst"
+    }
+  }
+}
