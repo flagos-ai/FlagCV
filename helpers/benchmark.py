@@ -12,11 +12,13 @@ from conftest import emit
 
 def _measure_ms(candidate, args):
     import torch
-    from triton.testing import do_bench
 
     device = args[0].device
     if device.type == "cpu":
         pytest.fail("Device timing requires an accelerator")
+
+    from triton.testing import do_bench
+
     with torch.get_device_module(device).device(device):
         return do_bench(lambda: candidate(*args), warmup=25, rep=100)
 

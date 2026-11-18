@@ -245,6 +245,17 @@ def test_probe(candidate, pytestconfig, request):
     assert report["records"][0]["status"] == "PRE_CALL_ERROR"
 
 
+def test_benchmark_rejects_cpu_without_triton(monkeypatch):
+    torch = pytest.importorskip("torch")
+    from helpers.benchmark import _measure_ms
+
+    monkeypatch.setitem(sys.modules, "triton.testing", None)
+    with pytest.raises(
+        pytest.fail.Exception, match="Device timing requires an accelerator"
+    ):
+        _measure_ms(None, (torch.empty(1, device="cpu"),))
+
+
 def test_benchmark_rejects_timer_that_bypasses_candidate(suite):
     directory = suite.path / "benchmark"
     directory.mkdir()
