@@ -44,15 +44,16 @@ def _profile(config, case_id, candidate, build):
                 candidate(*capture_inputs)
             if device_module:
                 device_module.synchronize()
-        assert config._evaluation.calls > before
+        assert (
+            config._evaluation.calls > before
+        ), "Profile did not execute its candidate"
 
 
-def _lookup_baseline(data, op_name, row):
-    input_shape = next(iter(row["shape"].values()))
+def _lookup_baseline(data, op_name, match_shape, row):
     record = (
         data.get(op_name, {})
         .get("shapes", {})
-        .get(str(input_shape), {})
+        .get(str(match_shape), {})
         .get(row["dtype"])
     )
     if record is None:
@@ -75,7 +76,7 @@ def _lookup_baseline(data, op_name, row):
     return latency, None
 
 
-def run(request, config, *, op_name, cases, make_inputs, describe):
+def run(request, config, *, op_name, cases, make_inputs, describe, baseline_tensor):
     """Run operator-owned cases using their input builder and metadata."""
     cases = tuple(cases)
     rows = []
@@ -124,11 +125,15 @@ def run(request, config, *, op_name, cases, make_inputs, describe):
         and not config.getoption("profile_only")
         else None
     )
+    workloads = [
+        (case, row)
+        for case, row in zip(cases, rows)
+        if not selected or row["case_id"] in selected
+    ]
+    probe_start = len(state.records)
     by_dtype = {}
-    for case, row in zip(cases, rows):
+    for case, row in workloads:
         case_id = row["case_id"]
-        if selected and case_id not in selected:
-            continue
         build = partial(make_inputs, case, device)
         if config.getoption("profile_only"):
             _profile(config, case_id, candidate, build)
@@ -149,9 +154,13 @@ def run(request, config, *, op_name, cases, make_inputs, describe):
             "params": row["params"],
             "latency": latency,
             "candidate_source": candidate.source,
+            "baseline_us": None,
+            "base_miss_reason": None,
+            "raw_speedup": None,
         }
         if baseline is not None:
-            base_us, reason = _lookup_baseline(baseline, op_name, row)
+            match_shape = row["shape"][baseline_tensor]
+            base_us, reason = _lookup_baseline(baseline, op_name, match_shape, row)
             result.update(
                 baseline_us=base_us,
                 base_miss_reason=reason,
@@ -159,18 +168,23 @@ def run(request, config, *, op_name, cases, make_inputs, describe):
             )
         by_dtype.setdefault(row["dtype"], []).append(result)
 
-    if candidate.source != "dummy":
-        details = [
-            {"op_name": op_name, "dtype": dtype, "level": "core", "result": results}
-            for dtype, results in by_dtype.items()
-        ]
-        emit(
-            config,
-            {
-                op_name: {
-                    "details": details,
-                    "result": "passed",
-                    "test_case": request.node.nodeid,
-                }
-            },
-        )
+    if candidate.source == "dummy":
+        expected = [row["case_id"] for _, row in workloads]
+        observed = [record["case_id"] for record in state.records[probe_start:]]
+        assert observed == expected, "Dummy records differ from the selected workloads"
+        return
+
+    details = [
+        {"op_name": op_name, "dtype": dtype, "level": "core", "result": results}
+        for dtype, results in by_dtype.items()
+    ]
+    emit(
+        config,
+        {
+            op_name: {
+                "details": details,
+                "result": "passed",
+                "test_case": request.node.nodeid,
+            }
+        },
+    )

@@ -1,5 +1,7 @@
 """Verify add output, destination alias and input preservation."""
 
+from functools import partial
+
 import pytest
 
 from helpers.correctness import poison_output
@@ -10,24 +12,16 @@ from helpers.tolerance import (
     assert_relative_close,
 )
 from reference import get_reference
-from workloads.add import CASES, Case, make_inputs
+from workloads.add import CORRECTNESS_CASES, SATURATION_CASE, case_id, make_inputs
 
 
 @pytest.mark.add
-@pytest.mark.parametrize(
-    "case", (*CASES, Case((1, 3), "uint8")), ids=lambda case: case.id
-)
+@pytest.mark.parametrize("case", CORRECTNESS_CASES, ids=case_id)
 def test_add(case, candidate, native_reference, pytestconfig):
     import torch
 
     device = pytestconfig.getoption("device")
-
-    def inputs():
-        a, b, dst = make_inputs(case, device)
-        if case.shape == (1, 3):
-            a.copy_(a.new_tensor([[250, 1, 255]]))
-            b.copy_(b.new_tensor([[10, 2, 255]]))
-        return a, b, dst
+    inputs = partial(make_inputs, case, device)
 
     if candidate.source == "dummy":
         pytestconfig._evaluation.run_probe(
@@ -37,10 +31,11 @@ def test_add(case, candidate, native_reference, pytestconfig):
 
     a, b, dst = inputs()
     a_before, b_before = a.clone(), b.clone()
-    assert_output = assert_one_lsb if case.dtype == "uint8" else assert_relative_close
+    _, dtype, _ = case
+    assert_output = assert_one_lsb if dtype == "uint8" else assert_relative_close
     reference = get_reference("add", device)
     expected = reference(a_before, b_before, torch.empty_like(dst))
-    if case.shape == (1, 3):
+    if case == SATURATION_CASE:
         assert_exact(expected, dst.new_tensor([[255, 3, 255]]))
     if native_reference is not None:
         native_dst = torch.empty_like(dst)

@@ -190,11 +190,13 @@ def test_benchmark_rejects_timer_that_bypasses_candidate(suite):
     (directory / "test_add_benchmark.py").write_text(
         (ROOT / "benchmark/test_add_benchmark.py").read_text() + """
 import pytest
+from helpers import benchmark
+
 @pytest.fixture(autouse=True)
 def fake_timer(monkeypatch):
     module = __import__(__name__, fromlist=[""])
     monkeypatch.setattr(module, "make_inputs", lambda *a: (1,))
-    monkeypatch.setattr(module, "measure_us", lambda *a: 1.0)
+    monkeypatch.setattr(benchmark, "_measure_ms", lambda *a: 1.0)
 """
     )
     result = suite.runpytest_subprocess(
@@ -202,6 +204,64 @@ def fake_timer(monkeypatch):
     )
     result.assert_outcomes(failed=1)
     result.stdout.fnmatch_lines(["*Candidate timer did not execute the candidate*"])
+
+
+def test_benchmark_matches_baseline_using_declared_tensor(suite):
+    directory = suite.path / "benchmark"
+    directory.mkdir()
+    (directory / "test_add_benchmark.py").write_text(
+        (ROOT / "benchmark/test_add_benchmark.py").read_text() + """
+import sys
+from helpers import benchmark
+
+@pytest.fixture(autouse=True)
+def fake_timing(monkeypatch):
+    module = sys.modules[__name__]
+    original_describe = module.describe
+
+    def describe(case):
+        dtype, shapes, params = original_describe(case)
+        return dtype, {"dst": (32, 32), "a": shapes["a"], "b": shapes["b"]}, params
+
+    def measure_ms(candidate, args):
+        candidate(*args)
+        return 0.002
+
+    monkeypatch.setattr(module, "describe", describe)
+    monkeypatch.setattr(module, "make_inputs", lambda *a: (1,))
+    monkeypatch.setattr(benchmark, "_measure_ms", measure_ms)
+"""
+    )
+    record = {
+        "T_us": 8.0,
+        "config": {
+            "native_api": "cv::cuda::add",
+            "channels": 1,
+            "mask": None,
+            "output_preallocated": True,
+            "output_dtype": "torch.float32",
+        },
+    }
+    (suite.path / "base.json").write_text(
+        json.dumps({"add": {"shapes": {"[64, 64]": {"torch.float32": record}}}})
+    )
+    suite.runpytest_subprocess(
+        "benchmark/test_add_benchmark.py",
+        "--ref-as-candidate",
+        "--case-id",
+        "benchmark/test_add_benchmark.py::test_add_benchmark::core::float32::0",
+        "--base-data",
+        "base.json",
+        "--record",
+        "json",
+        "--output",
+        "result.json",
+    ).assert_outcomes(passed=1)
+    rows = json.loads((suite.path / "result.json").read_text())["add"]["details"]
+    assert len(rows) == 1
+    case, = rows[0]["result"]
+    assert case["baseline_us"] == 8.0
+    assert case["raw_speedup"] == 4.0
 
 
 @pytest.mark.parametrize("candidate_fails", [False, True])
@@ -317,7 +377,7 @@ import sys
 @pytest.fixture(autouse=True)
 def fake_inputs(monkeypatch):
     def inputs(case, device):
-        if case.dtype == "uint8":
+        if case[1] == "uint8":
             pytest.skip("dtype unavailable")
         return (1,)
     monkeypatch.setattr(sys.modules[__name__], "make_inputs", inputs)
