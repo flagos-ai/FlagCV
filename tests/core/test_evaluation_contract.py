@@ -15,8 +15,9 @@ def suite(pytester, monkeypatch):
     monkeypatch.setenv("PYTHONPATH", str(ROOT))
     monkeypatch.delenv("GEMS_VENDOR", raising=False)
     pytester.makeini("[pytest]\naddopts = --device cpu")
-    definitions = pytester.mkdir("definitions")
-    (definitions / "add.json").write_text((ROOT / "definitions/add.json").read_text())
+    reference_dir = pytester.mkdir("reference")
+    for name in ("__init__.py", "add.py"):
+        (reference_dir / name).write_text((ROOT / "reference" / name).read_text())
     pytester.makeconftest(
         (ROOT / "conftest.py").read_text()
         + "\nfrom reference import _DEFAULT_REFERENCES\n"
@@ -41,7 +42,7 @@ def test_probe(candidate, use_candidate):
 
 
 def test_reference_rejects_missing_declaration(suite):
-    (suite.path / "definitions/missing.json").write_text('{"name": "missing"}')
+    (suite.path / "reference/missing.py").write_text("# No reference callable.\n")
     suite.makepyfile("""
 import pytest
 @pytest.mark.missing
@@ -55,10 +56,7 @@ def test_probe(candidate):
 
 @pytest.fixture
 def two_operators(suite):
-    (suite.path / "definitions/subtract.json").write_text('{"name": "subtract"}')
-    reference_dir = suite.mkdir("reference")
-    for name in ("__init__.py", "add.py"):
-        (reference_dir / name).write_text((ROOT / "reference" / name).read_text())
+    reference_dir = suite.path / "reference"
     (reference_dir / "subtract.py").write_text(
         "def reference(value): return value - 1\n"
     )

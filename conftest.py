@@ -12,12 +12,9 @@ from runtime import resolve_device
 _ROOT = Path(__file__).resolve().parent
 OPERATORS = tuple(
     sorted(
-        {path.stem for path in (_ROOT / "definitions").glob("*.json")}
-        | {
-            path.stem
-            for path in (_ROOT / "reference").glob("*.py")
-            if not path.stem.startswith("_")
-        }
+        path.stem
+        for path in (_ROOT / "reference").glob("*.py")
+        if not path.stem.startswith("_")
     )
 )
 
