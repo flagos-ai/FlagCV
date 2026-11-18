@@ -1,5 +1,11 @@
 """FlagCV numerical comparison rules for Python operator tests."""
 
+import json
+from pathlib import Path
+
+with Path(__file__).with_suffix(".json").open(encoding="utf-8") as policy_file:
+    _TOLERANCE = json.load(policy_file)
+
 
 def assert_exact(actual, expected):
     """Require exact element values."""
@@ -25,12 +31,12 @@ def assert_one_lsb(actual, expected):
     import torch
 
     assert actual.dtype == expected.dtype == torch.uint8
-    torch.testing.assert_close(actual, expected, rtol=0, atol=1)
+    torch.testing.assert_close(actual, expected, **_TOLERANCE["one_lsb"])
 
 
 def assert_relative_close(actual, expected):
     """Apply the FlagCV relative threshold for the output dtype."""
     import torch
 
-    rtol = {torch.float32: 1e-5, torch.float16: 1e-2}[expected.dtype]
-    torch.testing.assert_close(actual, expected, rtol=rtol, atol=0)
+    dtype = str(expected.dtype).removeprefix("torch.")
+    torch.testing.assert_close(actual, expected, **_TOLERANCE["relative"][dtype])

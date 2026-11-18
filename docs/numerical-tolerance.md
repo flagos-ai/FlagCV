@@ -47,5 +47,6 @@
 ## 实现位置
 
 Python 评测在 `helpers/tolerance.py` 提供比较器，由各算子测试显式选择规则。
+容差数值由 `helpers/tolerance.json` 统一配置。
 C++ 比较器规划放在 `tests/common/tolerance.hpp`，标量参考实现放 `reference/cpu/`（零依赖，不链任何厂商库）。厂商参考库只能出现在
 `backends/<platform>/validation/` 下做交叉验证，不进生产依赖。
