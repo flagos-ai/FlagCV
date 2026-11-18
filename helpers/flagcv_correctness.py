@@ -7,6 +7,19 @@ from helpers.tolerance import assert_bitwise_equal
 from reference import get_reference
 
 
+def poison_output(dst, expected):
+    """Initialize the destination to values outside the allowed tolerance."""
+    import torch
+
+    # An inverted high bit is always 128 levels away, even at 127 and 128.
+    if dst.dtype == torch.uint8:
+        dst.copy_(expected ^ 0x80)
+    elif dst.dtype == torch.float32:
+        dst.view(torch.int32).copy_(~expected.view(torch.int32))
+    else:
+        dst.fill_(float("nan"))
+
+
 def check(
     profile, case, candidate, native_reference, config, oracle, *, assert_output
 ):
@@ -44,13 +57,7 @@ def check(
         for source, snapshot in zip(native_inputs, snapshots):
             assert_bitwise_equal(source, snapshot)
 
-    # Poison uint8 outputs by 128 levels so a skipped write fails the 1-LSB rule.
-    if dst.dtype == torch.uint8:
-        dst.copy_(expected ^ 0x80)
-    elif dst.dtype == torch.float32:
-        dst.view(torch.int32).copy_(~expected.view(torch.int32))
-    else:
-        dst.fill_(float("nan"))
+    poison_output(dst, expected)
     scope = (
         torch.get_device_module(dst.device).device(dst.device)
         if dst.device.type != "cpu"

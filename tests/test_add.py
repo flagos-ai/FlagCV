@@ -2,8 +2,15 @@
 
 import pytest
 
-from workloads.add import CASES, Case, make_inputs
+from helpers.flagcv_correctness import poison_output
+from helpers.tolerance import (
+    assert_bitwise_equal,
+    assert_exact,
+    assert_one_lsb,
+    assert_relative_close,
+)
 from reference import get_reference
+from workloads.add import CASES, Case, make_inputs
 
 
 @pytest.mark.add
@@ -30,17 +37,20 @@ def test_add(case, candidate, native_reference, pytestconfig):
 
     a, b, dst = inputs()
     a_before, b_before = a.clone(), b.clone()
+    assert_output = assert_one_lsb if case.dtype == "uint8" else assert_relative_close
     reference = get_reference("add", device)
     expected = reference(a_before, b_before, torch.empty_like(dst))
     if case.shape == (1, 3):
-        torch.testing.assert_close(expected, dst.new_tensor([[255, 3, 255]]))
+        assert_exact(expected, dst.new_tensor([[255, 3, 255]]))
     if native_reference is not None:
         native_dst = torch.empty_like(dst)
         native_reference(a_before.clone(), b_before.clone(), native_dst)
-        torch.testing.assert_close(native_dst, expected)
-        expected = native_dst
+        assert_output(native_dst, expected)
 
+    poison_output(dst, expected)
     assert candidate(a, b, dst) is dst
-    torch.testing.assert_close(dst, expected)
-    torch.testing.assert_close(a, a_before, rtol=0, atol=0)
-    torch.testing.assert_close(b, b_before, rtol=0, atol=0)
+    assert_output(dst, expected)
+    if native_reference is not None:
+        assert_output(dst, native_dst)
+    assert_bitwise_equal(a, a_before)
+    assert_bitwise_equal(b, b_before)
