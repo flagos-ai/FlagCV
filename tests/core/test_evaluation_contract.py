@@ -1,6 +1,8 @@
 """Exercise the public pytest interface in isolated subprocesses."""
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -43,6 +45,53 @@ def test_probe(candidate, use_candidate):
         {"use_candidate": False},
     ]
     assert [row["opname"] for row in rows] == [["add"], ["add"]]
+
+
+def test_add_reports_shape_and_dtype(tmp_path, monkeypatch):
+    pytest.importorskip("torch")
+    monkeypatch.delenv("GEMS_VENDOR", raising=False)
+    output = tmp_path / "add-accuracy.json"
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "tests/test_add.py",
+            "--device",
+            "cpu",
+            "--ref-as-candidate",
+            "--record",
+            "json",
+            "--output",
+            str(output),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    rows = json.loads(output.read_text())
+    expected = {
+        ((64, 64), "float32"),
+        ((64, 64), "uint8"),
+        ((480, 640), "float32"),
+        ((480, 640), "uint8"),
+        ((1080, 1920), "float32"),
+        ((1080, 1920), "uint8"),
+        ((2160, 3840), "float32"),
+        ((2160, 3840), "uint8"),
+        ((1, 3), "uint8"),
+    }
+    assert len(rows) == len(expected)
+    assert {
+        (tuple(row["params"]["shape"]), row["params"]["dtype"])
+        for row in rows.values()
+    } == expected
+    for row in rows.values():
+        assert isinstance(row["params"]["shape"], list)
+        assert row["opname"] == ["add"]
+        assert row["result"] == "passed"
 
 
 def test_reference_rejects_missing_declaration(suite):

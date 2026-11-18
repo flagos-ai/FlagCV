@@ -8,11 +8,16 @@ from reference import get_reference
 
 @pytest.mark.add
 @pytest.mark.parametrize(
-    "case", (*CASES, Case((1, 3), "uint8")), ids=lambda case: case.id
+    ("shape", "dtype"),
+    [
+        pytest.param(case.shape, case.dtype, id=case.id)
+        for case in (*CASES, Case((1, 3), "uint8"))
+    ],
 )
-def test_add(case, candidate, native_reference, pytestconfig):
+def test_add(shape, dtype, candidate, native_reference, pytestconfig):
     import torch
 
+    case = Case(shape, dtype)
     device = pytestconfig.getoption("device")
 
     def inputs():
