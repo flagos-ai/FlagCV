@@ -2,7 +2,7 @@
 
 import pytest
 
-from helpers.flagcv_correctness import poison_output
+from helpers.correctness import poison_output
 from helpers.tolerance import (
     assert_bitwise_equal,
     assert_exact,
