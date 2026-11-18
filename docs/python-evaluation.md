@@ -6,13 +6,12 @@ benchmark comparison with static baseline data. Operator tests and benchmarks
 use the root pytest options to expose these capabilities. Each operator defines
 its own callable signature, inputs, and reference.
 
-The Python Definition describes the candidate interface. The C++ integration
-has its own CTest entry points.
+The C++ integration has its own CTest entry points.
 
-Register an operator with `definitions/OP.json` and mark its evaluation tests
-and benchmarks with `@pytest.mark.OP`. Define its default reference as
-`reference/OP.py` with a callable named `reference`. The runner uses the marker
-to select the reference or the matching `--override` entry. Dummy mode selects
+Add a default reference in `reference/OP.py` with a callable named
+`reference`, and mark its tests and benchmarks with `@pytest.mark.OP`. The
+runner discovers operators from the reference modules and uses the marker to
+select the reference or the matching `--override` entry. Dummy mode selects
 only the operator named by `--dummy-candidate`.
 
 ## Example: add

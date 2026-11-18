@@ -9,8 +9,16 @@ import pytest
 from reference import get_reference
 from runtime import resolve_device
 
+_ROOT = Path(__file__).resolve().parent
 OPERATORS = tuple(
-    sorted(path.stem for path in Path(__file__).with_name("definitions").glob("*.json"))
+    sorted(
+        {path.stem for path in (_ROOT / "definitions").glob("*.json")}
+        | {
+            path.stem
+            for path in (_ROOT / "reference").glob("*.py")
+            if not path.stem.startswith("_")
+        }
+    )
 )
 
 
@@ -481,7 +489,10 @@ def native_reference(request):
 
 
 def emit(config, data):
-    config._evaluation.payload.update(data)
+    payload = config._evaluation.payload
+    if "benchmarks" in data:
+        payload.setdefault("benchmarks", []).extend(data["benchmarks"])
+    payload.update({key: value for key, value in data.items() if key != "benchmarks"})
 
 
 def pytest_collection_modifyitems(config, items):
