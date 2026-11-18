@@ -282,12 +282,19 @@ class Evaluation:
                     "message": str(report.longrepr),
                 }
             )
+        if report.when != "call" and not (report.failed or report.skipped):
+            return
+        operator = getattr(item, "_candidate_operator", None)
+        operator_marks = {mark.name for mark in item.iter_markers()} & set(OPERATORS)
+        if operator:
+            operator_marks.add(operator)
+        result = {
+            "params": getattr(getattr(item, "callspec", None), "params", {}),
+            "opname": sorted(operator_marks),
+        }
         if report.when != "call":
-            if report.failed or report.skipped:
-                self.results[item.nodeid] = {
-                    "result": report.outcome,
-                    "reason": str(report.longrepr),
-                }
+            result.update(result=report.outcome, reason=str(report.longrepr))
+            self.results[item.nodeid] = result
             return
         validating = any(
             self.config.getoption(name)
@@ -317,14 +324,13 @@ class Evaluation:
                     and record["phase"] == "correctness"
                 ):
                     record["status"] = "POST_CALL_ERROR"
-        operator = getattr(item, "_candidate_operator", None)
         if operator is None and len(OPERATORS) == 1:
             operator = OPERATORS[0]
-        result = {
-            "result": report.outcome,
-            "reason": str(report.longrepr) if report.failed or report.skipped else None,
-            "candidate_calls": {f"flagcv.{operator}": self.calls} if operator else {},
-        }
+        result.update(
+            result=report.outcome,
+            reason=str(report.longrepr) if report.failed or report.skipped else None,
+            candidate_calls={f"flagcv.{operator}": self.calls} if operator else {},
+        )
         if self.config.getoption("ref_as_candidate"):
             result.update(
                 candidate_source="reference",
@@ -410,12 +416,14 @@ class Evaluation:
         elif config.getoption("record") == "log":
             reporter = config.pluginmanager.get_plugin("terminalreporter")
             if reporter:
-                reporter.write_line(json.dumps(self.payload or self.results))
+                reporter.write_line(
+                    json.dumps(self.payload or self.results, default=str)
+                )
 
 
 def write_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
 
 
 @pytest.fixture(scope="session")

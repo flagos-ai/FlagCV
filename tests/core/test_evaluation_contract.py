@@ -38,6 +38,11 @@ def test_probe(candidate, use_candidate):
     ).assert_outcomes(passed=1, failed=1)
     rows = list(json.loads((suite.path / "out.json").read_text()).values())
     assert [row["reference_candidate_calls"] for row in rows] == [1, 0]
+    assert [row["params"] for row in rows] == [
+        {"use_candidate": True},
+        {"use_candidate": False},
+    ]
+    assert [row["opname"] for row in rows] == [["add"], ["add"]]
 
 
 def test_reference_rejects_missing_declaration(suite):
@@ -48,9 +53,14 @@ import pytest
 def test_probe(candidate):
     candidate(1)
 """)
-    result = suite.runpytest_subprocess("--ref-as-candidate")
+    result = suite.runpytest_subprocess(
+        "--ref-as-candidate", "--record", "json", "--output", "out.json"
+    )
     result.assert_outcomes(errors=1)
     result.stdout.fnmatch_lines(["*No predefined reference*"])
+    (row,) = json.loads((suite.path / "out.json").read_text()).values()
+    assert row["opname"] == ["missing"]
+    assert row["params"] == {}
 
 
 @pytest.fixture
@@ -204,6 +214,67 @@ def fake_timer(monkeypatch):
     )
     result.assert_outcomes(failed=1)
     result.stdout.fnmatch_lines(["*Candidate timer did not execute the candidate*"])
+
+
+@pytest.mark.parametrize("baseline", ["matched", "missing", "disabled"])
+def test_benchmark_reports_baseline_fields(suite, baseline):
+    directory = suite.path / "benchmark"
+    directory.mkdir()
+    (directory / "test_add_benchmark.py").write_text(
+        (ROOT / "benchmark/test_add_benchmark.py").read_text() + """
+import sys
+
+@pytest.fixture(autouse=True)
+def fake_timer(monkeypatch):
+    def measure(function, inputs):
+        function(*inputs)
+        return 2.5
+
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "make_inputs", lambda *args: (1,))
+    monkeypatch.setattr(module, "measure_us", measure)
+"""
+    )
+    baseline_data = {}
+    if baseline == "matched":
+        record = {
+            "T_us": 10.0,
+            "config": {
+                "native_api": "cv::cuda::add",
+                "channels": 1,
+                "mask": None,
+                "output_preallocated": True,
+                "output_dtype": "torch.float32",
+            },
+        }
+        baseline_data = {"add": {"shapes": {"[64, 64]": {"torch.float32": record}}}}
+    (suite.path / "baseline.json").write_text(json.dumps(baseline_data))
+    args = [] if baseline == "disabled" else ["--base-data", "baseline.json"]
+    suite.runpytest_subprocess(
+        "benchmark/test_add_benchmark.py",
+        "--ref-as-candidate",
+        "--case-id",
+        "benchmark/test_add_benchmark.py::test_add_benchmark::core::float32::0",
+        "--record",
+        "json",
+        "--output",
+        "out.json",
+        *args,
+    ).assert_outcomes(passed=1)
+    report = json.loads((suite.path / "out.json").read_text())
+    (row,) = report["add"]["details"][0]["result"]
+    assert row["latency"] == pytest.approx(0.0025)
+    assert row["compared_speedup"] is None
+    if baseline == "matched":
+        assert row["base_latency_ms"] == pytest.approx(0.01)
+        assert row["baseline_us"] == pytest.approx(10.0)
+        assert row["base_raw_speedup"] == row["raw_speedup"] == pytest.approx(4.0)
+        assert row["base_miss_reason"] is None
+    else:
+        assert row["base_latency_ms"] is row["baseline_us"] is None
+        assert row["base_raw_speedup"] is row["raw_speedup"] is None
+        if baseline == "missing":
+            assert row["base_miss_reason"] == "missing add/shape/dtype record"
 
 
 @pytest.mark.parametrize("candidate_fails", [False, True])

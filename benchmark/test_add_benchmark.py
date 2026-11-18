@@ -173,14 +173,21 @@ def test_add_benchmark(request, pytestconfig):
             metrics = []
             for row in results:
                 if row["dtype"] == dtype:
+                    baseline_us = row.get("baseline_us")
+                    raw_speedup = row.get("raw_speedup")
                     metrics.append(
                         {
                             "case_id": row["case_id"],
                             "shape_detail": row["shape"],
                             "latency": row["latency"],
                             "candidate_source": row["candidate_source"],
-                            "raw_speedup": row.get("raw_speedup"),
-                            "baseline_us": row.get("baseline_us"),
+                            "raw_speedup": raw_speedup,
+                            "baseline_us": baseline_us,
+                            "base_latency_ms": (
+                                baseline_us / 1000 if baseline_us is not None else None
+                            ),
+                            "base_raw_speedup": raw_speedup,
+                            "compared_speedup": None,
                             "base_miss_reason": row.get("base_miss_reason"),
                         }
                     )
