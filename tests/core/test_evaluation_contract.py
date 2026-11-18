@@ -265,14 +265,15 @@ def fake_timer(monkeypatch):
     (row,) = report["add"]["details"][0]["result"]
     assert row["latency"] == pytest.approx(0.0025)
     assert row["compared_speedup"] is None
+    assert "baseline_us" not in row
+    assert "raw_speedup" not in row
     if baseline == "matched":
         assert row["base_latency_ms"] == pytest.approx(0.01)
-        assert row["baseline_us"] == pytest.approx(10.0)
-        assert row["base_raw_speedup"] == row["raw_speedup"] == pytest.approx(4.0)
+        assert row["base_raw_speedup"] == pytest.approx(4.0)
         assert row["base_miss_reason"] is None
     else:
-        assert row["base_latency_ms"] is row["baseline_us"] is None
-        assert row["base_raw_speedup"] is row["raw_speedup"] is None
+        assert row["base_latency_ms"] is None
+        assert row["base_raw_speedup"] is None
         if baseline == "missing":
             assert row["base_miss_reason"] == "missing add/shape/dtype record"
 

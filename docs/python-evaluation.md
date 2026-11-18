@@ -54,8 +54,7 @@ For this profile, baseline lookup requires an exact shape, dtype and
 OpenCV profile match. With `--record json`, benchmark output uses per-operator `details` and
 per-dtype `result` rows. `latency` and `base_latency_ms` are in milliseconds,
 and `base_raw_speedup` is baseline latency divided by candidate latency.
-`baseline_us` (microseconds) and `raw_speedup` remain available to existing
-readers. `compared_speedup` is null for the OpenCV CUDA comparison.
+`compared_speedup` is null for the OpenCV CUDA comparison.
 Correctness JSON records include pytest `params`, an `opname` list, and
 per-test `candidate_calls`. Reference
 validation also records `reference_calls` and `reference_candidate_calls`.

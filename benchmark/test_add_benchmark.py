@@ -154,9 +154,9 @@ def test_add_benchmark(request, pytestconfig):
             if baseline is not None:
                 base_us, reason = _lookup_baseline(baseline, case)
                 result.update(
+                    base_latency_ms=base_us / 1000 if base_us is not None else None,
+                    base_raw_speedup=base_us / latency if base_us is not None else None,
                     base_miss_reason=reason,
-                    raw_speedup=base_us / latency if base_us is not None else None,
-                    baseline_us=base_us,
                 )
         results.append(result)
     if candidate.source == "dummy":
@@ -173,20 +173,14 @@ def test_add_benchmark(request, pytestconfig):
             metrics = []
             for row in results:
                 if row["dtype"] == dtype:
-                    baseline_us = row.get("baseline_us")
-                    raw_speedup = row.get("raw_speedup")
                     metrics.append(
                         {
                             "case_id": row["case_id"],
                             "shape_detail": row["shape"],
                             "latency": row["latency"],
                             "candidate_source": row["candidate_source"],
-                            "raw_speedup": raw_speedup,
-                            "baseline_us": baseline_us,
-                            "base_latency_ms": (
-                                baseline_us / 1000 if baseline_us is not None else None
-                            ),
-                            "base_raw_speedup": raw_speedup,
+                            "base_latency_ms": row.get("base_latency_ms"),
+                            "base_raw_speedup": row.get("base_raw_speedup"),
                             "compared_speedup": None,
                             "base_miss_reason": row.get("base_miss_reason"),
                         }
