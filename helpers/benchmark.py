@@ -1,4 +1,4 @@
-"""Run, list and profile FlagCV elementwise benchmarks."""
+"""Run, list and profile FlagCV benchmarks."""
 
 import json
 import math
@@ -47,24 +47,23 @@ def _profile(config, case_id, candidate, build):
         assert config._evaluation.calls > before
 
 
-def _lookup_baseline(data, profile, case, row):
+def _lookup_baseline(data, op_name, row):
+    input_shape = next(iter(row["shape"].values()))
     record = (
-        data.get(profile.name, {})
+        data.get(op_name, {})
         .get("shapes", {})
-        .get(str(list(case.shape)), {})
+        .get(str(input_shape), {})
         .get(row["dtype"])
     )
     if record is None:
         return None, "missing operator/shape/dtype record"
     config = record.get("config", {})
     required = {
-        "native_api": f"cv::cuda::{profile.name}",
-        "channels": 1,
-        "mask": None,
+        "native_api": f"cv::cuda::{op_name}",
         "output_preallocated": True,
         "output_dtype": row["dtype"],
-        **profile.parameters,
-        **dict(case.parameters),
+        # The legacy OpenCV CUDA baseline does not record tensor contiguity.
+        **{key: value for key, value in row["params"].items() if key != "contiguous"},
     }
     if any(
         key not in config or config[key] != value for key, value in required.items()
@@ -76,13 +75,21 @@ def _lookup_baseline(data, profile, case, row):
     return latency, None
 
 
-def run(profile, request, config):
-    op_name = profile.name
-    workloads = profile.timing
-    rows = [
-        profile.describe(case, request.node.nodeid, index)
-        for index, case in enumerate(workloads)
-    ]
+def run(request, config, *, op_name, cases, make_inputs, describe):
+    """Run operator-owned cases using their input builder and metadata."""
+    cases = tuple(cases)
+    rows = []
+    for index, case in enumerate(cases):
+        dtype, shapes, params = describe(case)
+        rows.append(
+            {
+                "case_id": f"{request.node.nodeid}::core::{dtype}::{index}",
+                "ordinal": index,
+                "dtype": f"torch.{dtype}",
+                "shape": {name: list(shape) for name, shape in shapes.items()},
+                "params": params,
+            }
+        )
     state = config._evaluation
     if config.getoption("list_cases"):
         emit(
@@ -118,11 +125,11 @@ def run(profile, request, config):
         else None
     )
     by_dtype = {}
-    for case, row in zip(workloads, rows):
+    for case, row in zip(cases, rows):
         case_id = row["case_id"]
         if selected and case_id not in selected:
             continue
-        build = partial(profile.make_inputs, case, device)
+        build = partial(make_inputs, case, device)
         if config.getoption("profile_only"):
             _profile(config, case_id, candidate, build)
             return
@@ -144,7 +151,7 @@ def run(profile, request, config):
             "candidate_source": candidate.source,
         }
         if baseline is not None:
-            base_us, reason = _lookup_baseline(baseline, profile, case, row)
+            base_us, reason = _lookup_baseline(baseline, op_name, row)
             result.update(
                 baseline_us=base_us,
                 base_miss_reason=reason,

@@ -21,27 +21,35 @@ def poison_output(dst, expected):
 
 
 def check(
-    profile, case, candidate, native_reference, config, oracle, *, assert_output
+    op_name,
+    make_inputs,
+    candidate,
+    native_reference,
+    config,
+    oracle,
+    *,
+    source_count,
+    assert_output,
 ):
+    """Compare a candidate that takes source tensors, a destination and options."""
     import torch
 
     device = config.getoption("device")
-    build = partial(profile.make_inputs, case, device)
+    build = partial(make_inputs, device)
     state = config._evaluation
     if candidate.source == "dummy":
         state.run_probe(candidate, build, state.active)
         return
 
     args = build()
-    extra = case.extra
-    dst_index = len(profile.tensors) - 1
-    sources = args[:dst_index]
-    dst = args[dst_index]
+    sources = args[:source_count]
+    dst = args[source_count]
+    extra = args[source_count + 1 :]
     snapshots = tuple(source.clone() for source in sources)
     arrays = tuple(source.detach().cpu().numpy() for source in snapshots)
     expected = torch.from_numpy(oracle(*arrays, *extra)).to(dst.device)
 
-    reference = get_reference(profile.name, device)
+    reference = get_reference(op_name, device)
     reference_inputs = tuple(source.clone() for source in snapshots)
     reference_dst = torch.empty_like(dst)
     assert reference(*reference_inputs, reference_dst, *extra) is reference_dst
