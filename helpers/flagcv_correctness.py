@@ -3,11 +3,12 @@
 from contextlib import nullcontext
 from functools import partial
 
+from helpers.tolerance import assert_bitwise_equal
 from reference import get_reference
 
 
 def check(
-    profile, case, candidate, native_reference, config, oracle, *, exact_float=False
+    profile, case, candidate, native_reference, config, oracle, *, assert_output
 ):
     import torch
 
@@ -26,42 +27,27 @@ def check(
     snapshots = tuple(source.clone() for source in sources)
     arrays = tuple(source.detach().cpu().numpy() for source in snapshots)
     expected = torch.from_numpy(oracle(*arrays, *extra)).to(dst.device)
-    compare_bits = exact_float and dst.dtype == torch.float32
-
-    def assert_output(actual):
-        if compare_bits:
-            torch.testing.assert_close(
-                actual.view(torch.int32), expected.view(torch.int32), rtol=0, atol=0
-            )
-        else:
-            tolerance = 1e-6 if dst.dtype == torch.float32 else 0
-            torch.testing.assert_close(actual, expected, rtol=tolerance, atol=tolerance)
-
-    def assert_source(actual, snapshot):
-        if compare_bits:
-            actual, snapshot = actual.view(torch.int32), snapshot.view(torch.int32)
-        torch.testing.assert_close(actual, snapshot, rtol=0, atol=0)
 
     reference = get_reference(profile.name, device)
     reference_inputs = tuple(source.clone() for source in snapshots)
     reference_dst = torch.empty_like(dst)
     assert reference(*reference_inputs, reference_dst, *extra) is reference_dst
-    assert_output(reference_dst)
+    assert_output(reference_dst, expected)
     for source, snapshot in zip(reference_inputs, snapshots):
-        assert_source(source, snapshot)
+        assert_bitwise_equal(source, snapshot)
 
     if native_reference is not None:
         native_inputs = tuple(source.clone() for source in snapshots)
         native_dst = torch.empty_like(dst)
         native_reference(*native_inputs, native_dst, *extra)
-        assert_output(native_dst)
+        assert_output(native_dst, expected)
         for source, snapshot in zip(native_inputs, snapshots):
-            assert_source(source, snapshot)
+            assert_bitwise_equal(source, snapshot)
 
-    # Poison every element so an omitted write differs from the expected result.
+    # Poison uint8 outputs by 128 levels so a skipped write fails the 1-LSB rule.
     if dst.dtype == torch.uint8:
-        dst.copy_(255 - expected.to(torch.int16))
-    elif compare_bits:
+        dst.copy_(expected ^ 0x80)
+    elif dst.dtype == torch.float32:
         dst.view(torch.int32).copy_(~expected.view(torch.int32))
     else:
         dst.fill_(float("nan"))
@@ -72,6 +58,6 @@ def check(
     )
     with scope:
         assert candidate(*args) is dst
-    assert_output(dst)
+    assert_output(dst, expected)
     for source, snapshot in zip(sources, snapshots):
-        assert_source(source, snapshot)
+        assert_bitwise_equal(source, snapshot)
