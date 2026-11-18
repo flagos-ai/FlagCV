@@ -6,13 +6,12 @@ benchmark comparison with static baseline data. Operator tests and benchmarks
 use the root pytest options to expose these capabilities. Each operator defines
 its own callable signature, inputs, and reference.
 
-The Python Definition describes the candidate interface. The C++ integration
-has its own CTest entry points.
+The C++ integration has its own CTest entry points.
 
-Register an operator with `definitions/OP.json` and mark its evaluation tests
-and benchmarks with `@pytest.mark.OP`. Define its default reference as
-`reference/OP.py` with a callable named `reference`. The runner uses the marker
-to select the reference or the matching `--override` entry. Dummy mode selects
+Add a default reference in `reference/OP.py` with a callable named
+`reference`, and mark its tests and benchmarks with `@pytest.mark.OP`. The
+runner discovers operators from the reference modules and uses the marker to
+select the reference or the matching `--override` entry. Dummy mode selects
 only the operator named by `--dummy-candidate`.
 
 ## Example: add
@@ -56,7 +55,8 @@ per-dtype `result` rows. `latency` and `base_latency_ms` are in milliseconds,
 and `base_raw_speedup` is baseline latency divided by candidate latency.
 `compared_speedup` is null for the OpenCV CUDA comparison.
 Correctness JSON records include pytest `params`, an `opname` list, and
-per-test `candidate_calls`. Reference
+per-test `candidate_calls`. The add report stores `params.shape` as an array
+and `params.dtype` as a string. Reference
 validation also records `reference_calls` and `reference_candidate_calls`.
 Dummy evidence is written separately to `--dummy-report` (default
 `dummy-candidate-report.json`) using `flaggems.dummy-candidate/v1`.

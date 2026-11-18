@@ -1,0 +1,7 @@
+{
+  "one_lsb": {"rtol": 0, "atol": 1},
+  "relative": {
+    "float32": {"rtol": 1e-5, "atol": 0},
+    "float16": {"rtol": 1e-2, "atol": 0}
+  }
+}
