@@ -1,6 +1,8 @@
 """Exercise the public pytest interface in isolated subprocesses."""
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,8 +17,9 @@ def suite(pytester, monkeypatch):
     monkeypatch.setenv("PYTHONPATH", str(ROOT))
     monkeypatch.delenv("GEMS_VENDOR", raising=False)
     pytester.makeini("[pytest]\naddopts = --device cpu")
-    definitions = pytester.mkdir("definitions")
-    (definitions / "add.json").write_text((ROOT / "definitions/add.json").read_text())
+    reference_dir = pytester.mkdir("reference")
+    for name in ("__init__.py", "add.py"):
+        (reference_dir / name).write_text((ROOT / "reference" / name).read_text())
     pytester.makeconftest(
         (ROOT / "conftest.py").read_text()
         + "\nfrom reference import _DEFAULT_REFERENCES\n"
@@ -38,27 +41,83 @@ def test_probe(candidate, use_candidate):
     ).assert_outcomes(passed=1, failed=1)
     rows = list(json.loads((suite.path / "out.json").read_text()).values())
     assert [row["reference_candidate_calls"] for row in rows] == [1, 0]
+    assert [row["params"] for row in rows] == [
+        {"use_candidate": True},
+        {"use_candidate": False},
+    ]
+    assert [row["opname"] for row in rows] == [["add"], ["add"]]
+
+
+def test_add_reports_shape_and_dtype(tmp_path, monkeypatch):
+    pytest.importorskip("torch")
+    monkeypatch.delenv("GEMS_VENDOR", raising=False)
+    output = tmp_path / "add-accuracy.json"
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "tests/test_add.py",
+            "--device",
+            "cpu",
+            "--ref-as-candidate",
+            "--record",
+            "json",
+            "--output",
+            str(output),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    rows = json.loads(output.read_text())
+    expected = {
+        ((64, 64), "float32"),
+        ((64, 64), "uint8"),
+        ((480, 640), "float32"),
+        ((480, 640), "uint8"),
+        ((1080, 1920), "float32"),
+        ((1080, 1920), "uint8"),
+        ((2160, 3840), "float32"),
+        ((2160, 3840), "uint8"),
+        ((1, 3), "uint8"),
+    }
+    assert len(rows) == len(expected)
+    assert {
+        (tuple(row["params"]["shape"]), row["params"]["dtype"])
+        for row in rows.values()
+    } == expected
+    for row in rows.values():
+        assert isinstance(row["params"]["shape"], list)
+        assert row["opname"] == ["add"]
+        assert row["result"] == "passed"
 
 
 def test_reference_rejects_missing_declaration(suite):
-    (suite.path / "definitions/missing.json").write_text('{"name": "missing"}')
+    (suite.path / "reference/missing.py").write_text("# No reference callable.\n")
     suite.makepyfile("""
 import pytest
 @pytest.mark.missing
 def test_probe(candidate):
     candidate(1)
 """)
-    result = suite.runpytest_subprocess("--ref-as-candidate")
+    result = suite.runpytest_subprocess(
+        "--ref-as-candidate", "--record", "json", "--output", "out.json"
+    )
     result.assert_outcomes(errors=1)
     result.stdout.fnmatch_lines(["*No predefined reference*"])
+    (row,) = json.loads((suite.path / "out.json").read_text()).values()
+    assert row["opname"] == ["missing"]
+    assert row["params"] == {}
 
 
 @pytest.fixture
 def two_operators(suite):
-    (suite.path / "definitions/subtract.json").write_text('{"name": "subtract"}')
-    reference_dir = suite.mkdir("reference")
-    for name in ("__init__.py", "add.py"):
-        (reference_dir / name).write_text((ROOT / "reference" / name).read_text())
+    reference_dir = suite.path / "reference"
     (reference_dir / "subtract.py").write_text(
         "def reference(value): return value - 1\n"
     )
@@ -186,17 +245,30 @@ def test_probe(candidate, pytestconfig, request):
     assert report["records"][0]["status"] == "PRE_CALL_ERROR"
 
 
+def test_benchmark_rejects_cpu_without_triton(monkeypatch):
+    torch = pytest.importorskip("torch")
+    from helpers.benchmark import _measure_ms
+
+    monkeypatch.setitem(sys.modules, "triton.testing", None)
+    with pytest.raises(
+        pytest.fail.Exception, match="Device timing requires an accelerator"
+    ):
+        _measure_ms(None, (torch.empty(1, device="cpu"),))
+
+
 def test_benchmark_rejects_timer_that_bypasses_candidate(suite):
     directory = suite.path / "benchmark"
     directory.mkdir()
     (directory / "test_add_benchmark.py").write_text(
         (ROOT / "benchmark/test_add_benchmark.py").read_text() + """
 import pytest
+from helpers import benchmark
+
 @pytest.fixture(autouse=True)
 def fake_timer(monkeypatch):
     module = __import__(__name__, fromlist=[""])
     monkeypatch.setattr(module, "make_inputs", lambda *a: (1,))
-    monkeypatch.setattr(module, "measure_us", lambda *a: 1.0)
+    monkeypatch.setattr(benchmark, "_measure_ms", lambda *a: 1.0)
 """
     )
     result = suite.runpytest_subprocess(
@@ -204,6 +276,81 @@ def fake_timer(monkeypatch):
     )
     result.assert_outcomes(failed=1)
     result.stdout.fnmatch_lines(["*Candidate timer did not execute the candidate*"])
+
+
+@pytest.mark.parametrize("baseline", ["matched", "missing", "disabled"])
+def test_benchmark_reports_baseline_fields_using_declared_tensor(suite, baseline):
+    directory = suite.path / "benchmark"
+    directory.mkdir()
+    (directory / "test_add_benchmark.py").write_text(
+        (ROOT / "benchmark/test_add_benchmark.py").read_text() + """
+import sys
+from helpers import benchmark
+
+@pytest.fixture(autouse=True)
+def fake_timing(monkeypatch):
+    module = sys.modules[__name__]
+    original_describe = module.describe
+
+    def describe(case):
+        dtype, shapes, params = original_describe(case)
+        return dtype, {"dst": (32, 32), "a": shapes["a"], "b": shapes["b"]}, params
+
+    def measure_ms(candidate, args):
+        candidate(*args)
+        return 0.002
+
+    monkeypatch.setattr(module, "describe", describe)
+    monkeypatch.setattr(module, "make_inputs", lambda *a: (1,))
+    monkeypatch.setattr(benchmark, "_measure_ms", measure_ms)
+"""
+    )
+    record = {
+        "T_us": 8.0,
+        "config": {
+            "native_api": "cv::cuda::add",
+            "channels": 1,
+            "mask": None,
+            "output_preallocated": True,
+            "output_dtype": "torch.float32",
+        },
+    }
+    baseline_data = (
+        {"add": {"shapes": {"[64, 64]": {"torch.float32": record}}}}
+        if baseline == "matched"
+        else {}
+    )
+    (suite.path / "base.json").write_text(json.dumps(baseline_data))
+    args = [] if baseline == "disabled" else ["--base-data", "base.json"]
+    suite.runpytest_subprocess(
+        "benchmark/test_add_benchmark.py",
+        "--ref-as-candidate",
+        "--case-id",
+        "benchmark/test_add_benchmark.py::test_add_benchmark::core::float32::0",
+        "--record",
+        "json",
+        "--output",
+        "result.json",
+        *args,
+    ).assert_outcomes(passed=1)
+    rows = json.loads((suite.path / "result.json").read_text())["add"]["details"]
+    assert len(rows) == 1
+    (case,) = rows[0]["result"]
+    assert case["latency"] == pytest.approx(0.002)
+    assert case["compared_speedup"] is None
+    assert "baseline_us" not in case
+    assert "raw_speedup" not in case
+    if baseline == "matched":
+        assert case["base_latency_ms"] == pytest.approx(0.008)
+        assert case["base_raw_speedup"] == pytest.approx(4.0)
+        assert case["base_miss_reason"] is None
+    else:
+        assert case["base_latency_ms"] is None
+        assert case["base_raw_speedup"] is None
+        expected_reason = (
+            "missing operator/shape/dtype record" if baseline == "missing" else None
+        )
+        assert case["base_miss_reason"] == expected_reason
 
 
 @pytest.mark.parametrize("candidate_fails", [False, True])
@@ -319,7 +466,7 @@ import sys
 @pytest.fixture(autouse=True)
 def fake_inputs(monkeypatch):
     def inputs(case, device):
-        if case.dtype == "uint8":
+        if case[1] == "uint8":
             pytest.skip("dtype unavailable")
         return (1,)
     monkeypatch.setattr(sys.modules[__name__], "make_inputs", inputs)

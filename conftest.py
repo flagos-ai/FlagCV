@@ -9,8 +9,13 @@ import pytest
 from reference import get_reference
 from runtime import resolve_device
 
+_ROOT = Path(__file__).resolve().parent
 OPERATORS = tuple(
-    sorted(path.stem for path in Path(__file__).with_name("definitions").glob("*.json"))
+    sorted(
+        path.stem
+        for path in (_ROOT / "reference").glob("*.py")
+        if not path.stem.startswith("_")
+    )
 )
 
 
@@ -282,12 +287,19 @@ class Evaluation:
                     "message": str(report.longrepr),
                 }
             )
+        if report.when != "call" and not (report.failed or report.skipped):
+            return
+        operator = getattr(item, "_candidate_operator", None)
+        operator_marks = {mark.name for mark in item.iter_markers()} & set(OPERATORS)
+        if operator:
+            operator_marks.add(operator)
+        result = {
+            "params": getattr(getattr(item, "callspec", None), "params", {}),
+            "opname": sorted(operator_marks),
+        }
         if report.when != "call":
-            if report.failed or report.skipped:
-                self.results[item.nodeid] = {
-                    "result": report.outcome,
-                    "reason": str(report.longrepr),
-                }
+            result.update(result=report.outcome, reason=str(report.longrepr))
+            self.results[item.nodeid] = result
             return
         validating = any(
             self.config.getoption(name)
@@ -317,14 +329,13 @@ class Evaluation:
                     and record["phase"] == "correctness"
                 ):
                     record["status"] = "POST_CALL_ERROR"
-        operator = getattr(item, "_candidate_operator", None)
         if operator is None and len(OPERATORS) == 1:
             operator = OPERATORS[0]
-        result = {
-            "result": report.outcome,
-            "reason": str(report.longrepr) if report.failed or report.skipped else None,
-            "candidate_calls": {f"flagcv.{operator}": self.calls} if operator else {},
-        }
+        result.update(
+            result=report.outcome,
+            reason=str(report.longrepr) if report.failed or report.skipped else None,
+            candidate_calls={f"flagcv.{operator}": self.calls} if operator else {},
+        )
         if self.config.getoption("ref_as_candidate"):
             result.update(
                 candidate_source="reference",
@@ -410,12 +421,14 @@ class Evaluation:
         elif config.getoption("record") == "log":
             reporter = config.pluginmanager.get_plugin("terminalreporter")
             if reporter:
-                reporter.write_line(json.dumps(self.payload or self.results))
+                reporter.write_line(
+                    json.dumps(self.payload or self.results, default=str)
+                )
 
 
 def write_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
 
 
 @pytest.fixture(scope="session")
@@ -481,7 +494,10 @@ def native_reference(request):
 
 
 def emit(config, data):
-    config._evaluation.payload.update(data)
+    payload = config._evaluation.payload
+    if "benchmarks" in data:
+        payload.setdefault("benchmarks", []).extend(data["benchmarks"])
+    payload.update({key: value for key, value in data.items() if key != "benchmarks"})
 
 
 def pytest_collection_modifyitems(config, items):
