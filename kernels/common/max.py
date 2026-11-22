@@ -81,9 +81,11 @@ def _max_strided_kernel(
     a_ptr,
     b_ptr,
     o_ptr,
-    meta_ptr,
     n_elements,
-    RANK: tl.constexpr,
+    SHAPE: tl.constexpr,
+    A_STRIDES: tl.constexpr,
+    B_STRIDES: tl.constexpr,
+    OUT_STRIDES: tl.constexpr,
     BLOCK: tl.constexpr,
 ):
     pid = tl.program_id(0)
@@ -93,14 +95,14 @@ def _max_strided_kernel(
     off_a = tl.zeros([BLOCK], dtype=tl.int64)
     off_b = tl.zeros([BLOCK], dtype=tl.int64)
     off_o = tl.zeros([BLOCK], dtype=tl.int64)
-    for k in tl.static_range(RANK):
-        j = RANK - 1 - k
-        d = tl.load(meta_ptr + j)
+    for k in tl.static_range(len(SHAPE)):
+        j: tl.constexpr = len(SHAPE) - 1 - k
+        d: tl.constexpr = SHAPE[j]
         idx = rem % d
         rem = rem // d
-        off_a += idx * tl.load(meta_ptr + RANK + j)
-        off_b += idx * tl.load(meta_ptr + 2 * RANK + j)
-        off_o += idx * tl.load(meta_ptr + 3 * RANK + j)
+        off_a += idx * A_STRIDES[j]
+        off_b += idx * B_STRIDES[j]
+        off_o += idx * OUT_STRIDES[j]
     a = tl.load(a_ptr + off_a, mask=mask, eviction_policy="evict_first")
     b = tl.load(b_ptr + off_b, mask=mask, eviction_policy="evict_first")
     tl.store(
@@ -142,6 +144,16 @@ def _collapse_layout(tensors):
 
 
 def max(src1, src2, dst=None):
+    if src1.ndim not in (2, 3):
+        raise ValueError("Expected a 2-D or HWC image")
+    if (src2.shape, src2.dtype, src2.device) != (src1.shape, src1.dtype, src1.device):
+        raise ValueError("Sources must match in shape, dtype, and device")
+    if dst is not None and (dst.shape, dst.dtype, dst.device) != (
+        src1.shape,
+        src1.dtype,
+        src1.device,
+    ):
+        raise ValueError("Destination must match sources in shape, dtype, and device")
     with torch.cuda.device(src1.device):
         return _run(src1, src2, dst)
 
@@ -166,21 +178,17 @@ def _run(src1, src2, dst=None):
         return dst
 
     shape, strides = _collapse_layout((src1, src2, dst))
-    rank = len(shape)
-    meta = torch.tensor(
-        list(shape) + strides[0] + strides[1] + strides[2],
-        dtype=torch.int64,
-        device=src1.device,
-    )
     sblock = 1024
     grid = ((n + sblock - 1) // sblock,)
     _max_strided_kernel[grid](
         src1,
         src2,
         dst,
-        meta,
         n,
-        RANK=rank,
+        SHAPE=tuple(shape),
+        A_STRIDES=tuple(strides[0]),
+        B_STRIDES=tuple(strides[1]),
+        OUT_STRIDES=tuple(strides[2]),
         BLOCK=sblock,
         num_warps=8,
     )

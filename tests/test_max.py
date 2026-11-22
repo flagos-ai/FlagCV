@@ -100,3 +100,30 @@ def test_max_pitched_roi(shape, dtype, offset, candidate, pytestconfig):
     expected = _check_call(get_reference(OP_NAME, device), build())
     actual = _check_call(candidate, build())
     assert_bitwise_equal(actual._base, expected._base)
+
+
+@pytest.mark.max
+def test_max_rejects_wrong_destination(candidate, pytestconfig):
+    if candidate.source != "override":
+        pytest.skip("This verifies the Triton candidate's public input checks")
+    device = pytestconfig.getoption("device")
+    src = torch.zeros((2, 3), dtype=torch.uint8, device=device)
+    with pytest.raises(ValueError, match="Destination"):
+        candidate(src, src.clone(), src.new_empty((1, 3)))
+
+
+@pytest.mark.max
+def test_max_pitched_roi_cuda_graph(candidate, pytestconfig):
+    device = torch.device(pytestconfig.getoption("device"))
+    if device.type != "cuda" or candidate.source != "override":
+        pytest.skip("Requires the Triton override on CUDA")
+    a = torch.arange(15, dtype=torch.uint8, device=device).reshape(3, 5)[:, :3]
+    b = (a + 2).contiguous()
+    dst = torch.empty((3, 5), dtype=torch.uint8, device=device)[:, :3]
+    candidate(a, b, dst)
+    torch.cuda.synchronize(device)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        candidate(a, b, dst)
+    graph.replay()
+    assert_bitwise_equal(dst, b)
