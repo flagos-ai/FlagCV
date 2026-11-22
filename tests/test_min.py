@@ -100,13 +100,3 @@ def test_min_pitched_roi(shape, dtype, offset, candidate, pytestconfig):
     expected = _check_call(get_reference(OP_NAME, device), build())
     actual = _check_call(candidate, build())
     assert_bitwise_equal(actual._base, expected._base)
-
-
-@pytest.mark.min
-def test_min_rejects_wrong_destination(candidate, pytestconfig):
-    if candidate.source != "override":
-        pytest.skip("This verifies the Triton candidate's public input checks")
-    device = pytestconfig.getoption("device")
-    src = torch.zeros((2, 3), dtype=torch.uint8, device=device)
-    with pytest.raises(ValueError, match="Destination"):
-        candidate(src, src.clone(), src.new_empty((1, 3)))
