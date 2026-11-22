@@ -34,6 +34,7 @@ def _timing_cases():
 TIMING_CASES = _timing_cases()
 CORRECTNESS_CASES = (
     *TIMING_CASES,
+    Case((3, 5, 1), "uint8", masked=True),
     *(Case((3, 5), dtype, masked=True) for dtype in DEPTHS if dtype != "float32"),
     Case((3, 5), "float32", masked=True, special=True),
 )
