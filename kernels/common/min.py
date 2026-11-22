@@ -173,6 +173,16 @@ def _merge_dims(shape, strides):
 
 
 def min(src1, src2, dst=None):
+    if src1.ndim not in (2, 3):
+        raise ValueError("Expected a 2-D or HWC image")
+    if (src2.shape, src2.dtype, src2.device) != (src1.shape, src1.dtype, src1.device):
+        raise ValueError("Sources must match in shape, dtype, and device")
+    if dst is not None and (dst.shape, dst.dtype, dst.device) != (
+        src1.shape,
+        src1.dtype,
+        src1.device,
+    ):
+        raise ValueError("Destination must match sources in shape, dtype, and device")
     with torch.cuda.device(src1.device):
         return _run(src1, src2, dst)
 
