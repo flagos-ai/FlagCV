@@ -74,3 +74,13 @@ def test_bitwise_or(case, candidate, native_reference, pytestconfig):
         if native_reference is not None:
             assert_bitwise_equal(got, _check_call(native_reference, build()))
     assert_bitwise_equal(got, expected)
+
+
+@pytest.mark.bitwise_or
+def test_bitwise_or_rejects_wrong_destination(candidate, pytestconfig):
+    if candidate.source != "override":
+        pytest.skip("This verifies the Triton candidate's public input checks")
+    device = pytestconfig.getoption("device")
+    src = torch.zeros((2, 3), dtype=torch.uint8, device=device)
+    with pytest.raises(ValueError, match="Destination"):
+        candidate(src, src.clone(), src.new_empty((1, 3)))

@@ -79,14 +79,12 @@ def _bitwise_or_flat(
 
 @triton.jit
 def _decompose(idx, D1, D2, D3, s0, s1, s2, s3):
-    c0 = D1 * D2 * D3
-    i0 = idx // c0
-    r = idx - i0 * c0
-    c1 = D2 * D3
-    i1 = r // c1
-    r = r - i1 * c1
-    i2 = r // D3
-    i3 = r - i2 * D3
+    i3 = idx % D3
+    idx = idx // D3
+    i2 = idx % D2
+    idx = idx // D2
+    i1 = idx % D1
+    i0 = idx // D1
     return i0 * s0 + i1 * s1 + i2 * s2 + i3 * s3
 
 
@@ -164,21 +162,6 @@ def _flat(t):
 def _shape_stride4(t):
     shape = list(t.shape)
     strides = list(t.stride())
-    i = len(shape) - 1
-    while len(shape) > _MAX_RANK and i > 0:
-        if (
-            shape[i] == 1
-            or shape[i - 1] == 1
-            or strides[i - 1] == strides[i] * shape[i]
-        ):
-            shape[i - 1] = shape[i - 1] * shape[i]
-            shape.pop(i)
-            strides.pop(i)
-        i -= 1
-    if len(shape) > _MAX_RANK:
-        raise NotImplementedError(
-            "bitwise_or: unsupported tensor rank for non-contiguous input"
-        )
     while len(shape) < _MAX_RANK:
         shape.insert(0, 1)
         strides.insert(0, 0)
@@ -194,6 +177,25 @@ def _config(itemsize):
 
 
 def bitwise_or(src1, src2, dst=None, mask=None):
+    if src1.ndim not in (2, 3):
+        raise ValueError("Expected a 2-D or HWC image")
+    if (src2.shape, src2.dtype, src2.device) != (src1.shape, src1.dtype, src1.device):
+        raise ValueError("Sources must match in shape, dtype, and device")
+    if dst is not None and (dst.shape, dst.dtype, dst.device) != (
+        src1.shape,
+        src1.dtype,
+        src1.device,
+    ):
+        raise ValueError("Destination must match sources in shape, dtype, and device")
+    if mask is not None:
+        if src1.ndim == 3 and src1.shape[-1] != 1:
+            raise ValueError("Mask requires single-channel inputs")
+        if (mask.shape, mask.dtype, mask.device) != (
+            src1.shape[:2],
+            torch.uint8,
+            src1.device,
+        ):
+            raise ValueError("Mask must be an HxW uint8 tensor on the input device")
     with torch.cuda.device(src1.device):
         return _run(src1, src2, dst, mask)
 

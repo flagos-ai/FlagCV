@@ -10,5 +10,10 @@ def reference(src1, src2, dst, mask=None):
     )
     target = dst.view(storage_type)
     result = torch.bitwise_or(src1.view(storage_type), src2.view(storage_type))
-    target.copy_(result if mask is None else torch.where(mask != 0, result, target))
+    if mask is not None:
+        active = mask != 0
+        if src1.ndim == 3:
+            active = active.unsqueeze(-1)
+        result = torch.where(active, result, target)
+    target.copy_(result)
     return dst
