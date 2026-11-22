@@ -95,11 +95,9 @@ def _max_strided_kernel(
     off_a = tl.zeros([BLOCK], dtype=tl.int64)
     off_b = tl.zeros([BLOCK], dtype=tl.int64)
     off_o = tl.zeros([BLOCK], dtype=tl.int64)
-    for k in tl.static_range(len(SHAPE)):
-        j: tl.constexpr = len(SHAPE) - 1 - k
-        d: tl.constexpr = SHAPE[j]
-        idx = rem % d
-        rem = rem // d
+    for j in tl.static_range(len(SHAPE) - 1, -1, -1):
+        idx = rem % SHAPE[j]
+        rem = rem // SHAPE[j]
         off_a += idx * A_STRIDES[j]
         off_b += idx * B_STRIDES[j]
         off_o += idx * OUT_STRIDES[j]
