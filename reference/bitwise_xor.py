@@ -1,0 +1,14 @@
+"""Torch reference for OpenCV CUDA bitwise operations."""
+
+import torch
+
+
+def reference(src1, src2, dst, mask=None):
+    # CV_32F bitwise methods use the encoding, not floating point arithmetic.
+    storage_type = {torch.float32: torch.int32, torch.uint16: torch.int16}.get(
+        src1.dtype, src1.dtype
+    )
+    target = dst.view(storage_type)
+    result = torch.bitwise_xor(src1.view(storage_type), src2.view(storage_type))
+    target.copy_(result if mask is None else torch.where(mask != 0, result, target))
+    return dst
