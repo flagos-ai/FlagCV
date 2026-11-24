@@ -1,0 +1,2 @@
+# Official FlagOS AMD wheel; do not replace this with the stock Triton wheel.
+flagtree @ https://resource.flagos.net/repository/flagos-pypi-hosted/packages/flagtree/0.7.0+amd3.6/flagtree-0.7.0+amd3.6-cp312-cp312-linux_x86_64.whl --hash=sha256:56f14b2f5eba88f406fec7541adc61a8abf540aa731b12cb3e9970fbeb3fd43e
