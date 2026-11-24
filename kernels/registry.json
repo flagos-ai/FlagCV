@@ -5,6 +5,31 @@
       "name": "flip",
       "source": "common/flip.py",
       "function": "flip_kernel"
+    },
+    {
+      "name": "add",
+      "source": "common/pointwise.py",
+      "function": "pointwise_kernel"
+    },
+    {
+      "name": "subtract",
+      "source": "common/pointwise.py",
+      "function": "pointwise_kernel"
+    },
+    {
+      "name": "multiply",
+      "source": "common/pointwise.py",
+      "function": "pointwise_kernel"
+    },
+    {
+      "name": "bitwise_and",
+      "source": "common/pointwise.py",
+      "function": "pointwise_kernel"
+    },
+    {
+      "name": "bitwise_not",
+      "source": "common/pointwise.py",
+      "function": "pointwise_kernel"
     }
   ]
 }

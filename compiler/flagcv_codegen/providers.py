@@ -54,7 +54,10 @@ def plan_flip(request, facts=None):
     return {"BLOCK_X": block_x, "BLOCK_Y": block_y}, num_warps, grid
 
 
-PLANS = {"flip": plan_flip}
+# These kernels share flip's row/column tiling and CHANNELS grid parameter.
+PLANS = dict.fromkeys(
+    ("flip", "add", "subtract", "multiply", "bitwise_and", "bitwise_not"), plan_flip
+)
 
 
 def compile_with_plan(request):

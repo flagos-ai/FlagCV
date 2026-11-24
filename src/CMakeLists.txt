@@ -1,9 +1,12 @@
 # Operator sources are added here as they land: one file per family under
 # core/ or imgproc/, plus its lowering under lowering/.
 add_library(flagcv
+  core/arithmetic.cpp
+  core/bitwise.cpp
   core/flip.cpp
   image/gpumat.cpp
   lowering/flip.cpp
+  lowering/pointwise.cpp
   runtime/compiler_client.cpp
   runtime/json.cpp
   runtime/paths.cpp

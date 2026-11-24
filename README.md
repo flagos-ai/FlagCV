@@ -32,7 +32,10 @@ The NVIDIA backend is the one built and tested here; the other five implement
 the same plugin contract and compile against their SDKs when it is present
 (`-DCUDAToolkit_ROOT=<corex>` for `iluvatar`).
 
-### Build and test
+#The supported C++ operator profiles, validation commands and performance results are
+documented in [C++ operators](docs/cpp-operators.md).
+
+## Build and test
 
 ```sh
 cmake -B build -DBUILD_SHARED_LIBS=ON -DFLAGCV_BUILD_TESTS=ON

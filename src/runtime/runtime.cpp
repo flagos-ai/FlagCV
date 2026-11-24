@@ -365,10 +365,10 @@ void launch(Handle& handle, const LoweredOp& op,
       kinds.push_back(0);
     }
   }
+  std::uint64_t global_scratch = 0, profile_scratch = 0;
   if (plugin.appends_scratch_args) {
     // Triton's ABI ends with two scratch pointers. The compiler rejects any
     // kernel that needs real scratch memory, so null is correct here.
-    std::uint64_t global_scratch = 0, profile_scratch = 0;
     args.push_back(&global_scratch);
     args.push_back(&profile_scratch);
     kinds.push_back(0);

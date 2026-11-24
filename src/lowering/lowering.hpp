@@ -86,6 +86,10 @@ struct LoweredOp {
  * its lowering directly.
  */
 
+enum class PointwiseMode { kAdd, kSubtract, kMultiply, kAnd, kNot };
+LoweredOp lower_pointwise(const GpuMat& src1, const GpuMat& src2,
+                          const GpuMat& dst, PointwiseMode mode);
+
 /* flip: flip_code == 0 mirrors rows, > 0 mirrors columns, < 0 both. */
 LoweredOp lower_flip(const GpuMat& src, const GpuMat& dst, int flip_code);
 

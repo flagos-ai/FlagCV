@@ -3,7 +3,9 @@
 两件事，分开做：**加一个对标 OpenCV 的接口**，和**加一个 Triton kernel**。
 一个新算子通常两件都要做；给已有算子换平台实现只做第二件。
 
-下面以 `bitwise_and` 为例（仓库里已经没有它了，这里只是示范）。
+当前已实现的接口范围见 [C++ operator profiles](cpp-operators.md)。
+下面以完整 OpenCV 风格的 `bitwise_and` 扩展接口为例；mask/scalar 形态是扩展设计示范，
+并非当前 array-array profile 已提供的重载。
 
 ## 一、添加新接口
 

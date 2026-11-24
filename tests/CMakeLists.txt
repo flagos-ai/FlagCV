@@ -14,8 +14,10 @@ endfunction()
 # far, so they build when the nvidia backend does.
 if("nvidia" IN_LIST FLAGCV_BACKENDS)
   find_package(CUDAToolkit REQUIRED)
-  flagcv_add_test(flip)
-  target_link_libraries(test_flip PRIVATE CUDA::cudart)
-  # Each test needs the plugin it loads at runtime.
-  add_dependencies(test_flip flagcv_nvidia)
+  foreach(family flip pointwise)
+    flagcv_add_test(${family})
+    target_link_libraries(test_${family} PRIVATE CUDA::cudart)
+    # Each test needs the plugin it loads at runtime.
+    add_dependencies(test_${family} flagcv_nvidia)
+  endforeach()
 endif()
