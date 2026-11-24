@@ -29,13 +29,15 @@ def suite(pytester, monkeypatch):
 
 
 def test_reference_mode_observes_each_case(suite):
-    suite.makepyfile("""
+    suite.makepyfile(
+        """
 import pytest
 @pytest.mark.parametrize("use_candidate", [True, False])
 def test_probe(candidate, use_candidate):
     if use_candidate:
         assert candidate(1) == 2
-""")
+"""
+    )
     suite.runpytest_subprocess(
         "--ref-as-candidate", "--record", "json", "--output", "out.json"
     ).assert_outcomes(passed=1, failed=1)
@@ -88,8 +90,7 @@ def test_add_reports_shape_and_dtype(tmp_path, monkeypatch):
     }
     assert len(rows) == len(expected)
     assert {
-        (tuple(row["params"]["shape"]), row["params"]["dtype"])
-        for row in rows.values()
+        (tuple(row["params"]["shape"]), row["params"]["dtype"]) for row in rows.values()
     } == expected
     for row in rows.values():
         assert isinstance(row["params"]["shape"], list)
@@ -99,12 +100,14 @@ def test_add_reports_shape_and_dtype(tmp_path, monkeypatch):
 
 def test_reference_rejects_missing_declaration(suite):
     (suite.path / "reference/missing.py").write_text("# No reference callable.\n")
-    suite.makepyfile("""
+    suite.makepyfile(
+        """
 import pytest
 @pytest.mark.missing
 def test_probe(candidate):
     candidate(1)
-""")
+"""
+    )
     result = suite.runpytest_subprocess(
         "--ref-as-candidate", "--record", "json", "--output", "out.json"
     )
@@ -121,7 +124,8 @@ def two_operators(suite):
     (reference_dir / "subtract.py").write_text(
         "def reference(value): return value - 1\n"
     )
-    suite.makepyfile("""
+    suite.makepyfile(
+        """
 import pytest
 
 @pytest.mark.add
@@ -136,7 +140,8 @@ def test_subtract(candidate, pytestconfig, request):
         pytestconfig._evaluation.run_probe(candidate, lambda: (4,), request.node.nodeid)
     else:
         assert candidate(4) == 3
-""")
+"""
+    )
     return suite
 
 
@@ -146,13 +151,17 @@ def test_candidate_dispatches_by_test_operator(two_operators, mode):
     if mode == "reference":
         args = ["--ref-as-candidate"]
     else:
-        suite.makepyfile(implementations="""
+        suite.makepyfile(
+            implementations="""
 def add(value): return value + 1
 def subtract(value): return value - 1
-""")
+"""
+        )
         args = [
-            "--override", "add:implementations.py",
-            "--override", "subtract:implementations.py",
+            "--override",
+            "add:implementations.py",
+            "--override",
+            "subtract:implementations.py",
         ]
     suite.runpytest_subprocess(
         *args, "--record", "json", "--output", "out.json"
@@ -183,10 +192,12 @@ def test_dummy_selects_only_requested_operator(two_operators):
 
 
 def test_dummy_reports_individual_calls(suite):
-    suite.makepyfile("""
+    suite.makepyfile(
+        """
 def test_probe(candidate, pytestconfig, request):
     pytestconfig._evaluation.run_probe(candidate, lambda: (1,), request.node.nodeid)
-""")
+"""
+    )
     suite.runpytest_subprocess(
         "--dummy-candidate", "add", "--dummy-report", "dummy.json"
     ).assert_outcomes(passed=1)
@@ -234,12 +245,14 @@ def test_override_accepts_equals_and_tracks_calls(suite):
 
 
 def test_dummy_signal_during_preparation_is_not_a_hit(suite):
-    suite.makepyfile("""
+    suite.makepyfile(
+        """
 def test_probe(candidate, pytestconfig, request):
     pytestconfig._evaluation.run_probe(
         candidate, lambda: candidate(1), request.node.nodeid
     )
-""")
+"""
+    )
     suite.runpytest_subprocess("--dummy-candidate", "add").assert_outcomes(failed=1)
     report = json.loads((suite.path / "dummy-candidate-report.json").read_text())
     assert report["records"][0]["status"] == "PRE_CALL_ERROR"
@@ -260,7 +273,8 @@ def test_benchmark_rejects_timer_that_bypasses_candidate(suite):
     directory = suite.path / "benchmark"
     directory.mkdir()
     (directory / "test_add_benchmark.py").write_text(
-        (ROOT / "benchmark/test_add_benchmark.py").read_text() + """
+        (ROOT / "benchmark/test_add_benchmark.py").read_text()
+        + """
 import pytest
 from helpers import benchmark
 
@@ -269,88 +283,86 @@ def fake_timer(monkeypatch):
     module = __import__(__name__, fromlist=[""])
     monkeypatch.setattr(module, "make_inputs", lambda *a: (1,))
     monkeypatch.setattr(benchmark, "_measure_ms", lambda *a: 1.0)
+    monkeypatch.setattr(benchmark, "_validate_outputs", lambda *a: None)
 """
     )
     result = suite.runpytest_subprocess(
-        "benchmark/test_add_benchmark.py", "--ref-as-candidate"
+        "benchmark/test_add_benchmark.py", "--ref-as-candidate", "--baseline", "none"
     )
     result.assert_outcomes(failed=1)
     result.stdout.fnmatch_lines(["*Candidate timer did not execute the candidate*"])
 
 
-@pytest.mark.parametrize("baseline", ["matched", "missing", "disabled"])
-def test_benchmark_reports_baseline_fields_using_declared_tensor(suite, baseline):
+@pytest.mark.parametrize("baseline", ["live", "missing", "disabled"])
+def test_benchmark_reports_live_baseline_and_never_falls_back(suite, baseline):
     directory = suite.path / "benchmark"
     directory.mkdir()
     (directory / "test_add_benchmark.py").write_text(
-        (ROOT / "benchmark/test_add_benchmark.py").read_text() + """
+        (ROOT / "benchmark/test_add_benchmark.py").read_text()
+        + """
+from pathlib import Path
 import sys
 from helpers import benchmark
+
+class Baseline:
+    version = "test-opencv"
+    def __call__(self, *args):
+        return 6
+    def close(self):
+        Path("closed.txt").write_text("closed")
 
 @pytest.fixture(autouse=True)
 def fake_timing(monkeypatch):
     module = sys.modules[__name__]
-    original_describe = module.describe
-
-    def describe(case):
-        dtype, shapes, params = original_describe(case)
-        return dtype, {"dst": (32, 32), "a": shapes["a"], "b": shapes["b"]}, params
-
-    def measure_ms(candidate, args):
-        candidate(*args)
-        return 0.002
-
-    monkeypatch.setattr(module, "describe", describe)
+    def prepare(*args):
+        if Path("missing.txt").exists():
+            raise RuntimeError("OpenCV bridge unavailable")
+        return Baseline(), (5,)
+    def measure_ms(function, args):
+        function(*args)
+        return 0.008 if args == (5,) else 0.002
     monkeypatch.setattr(module, "make_inputs", lambda *a: (1,))
+    monkeypatch.setattr(benchmark, "_prepare_baseline", prepare)
+    monkeypatch.setattr(benchmark, "_validate_outputs", lambda *a: None)
     monkeypatch.setattr(benchmark, "_measure_ms", measure_ms)
 """
     )
-    record = {
-        "T_us": 8.0,
-        "config": {
-            "native_api": "cv::cuda::add",
-            "channels": 1,
-            "mask": None,
-            "output_preallocated": True,
-            "output_dtype": "torch.float32",
-        },
-    }
-    baseline_data = (
-        {"add": {"shapes": {"[64, 64]": {"torch.float32": record}}}}
-        if baseline == "matched"
-        else {}
-    )
-    (suite.path / "base.json").write_text(json.dumps(baseline_data))
-    args = [] if baseline == "disabled" else ["--base-data", "base.json"]
-    suite.runpytest_subprocess(
+    if baseline == "missing":
+        (suite.path / "missing.txt").touch()
+    result = suite.runpytest_subprocess(
         "benchmark/test_add_benchmark.py",
         "--ref-as-candidate",
+        "--baseline",
+        "none" if baseline == "disabled" else "opencv-cuda",
         "--case-id",
         "benchmark/test_add_benchmark.py::test_add_benchmark::core::float32::0",
         "--record",
         "json",
         "--output",
         "result.json",
-        *args,
-    ).assert_outcomes(passed=1)
+    )
+    if baseline == "missing":
+        result.assert_outcomes(failed=1)
+        result.stdout.fnmatch_lines(["*OpenCV bridge unavailable*"])
+        assert "add" not in json.loads((suite.path / "result.json").read_text())
+        return
+    result.assert_outcomes(passed=1)
     rows = json.loads((suite.path / "result.json").read_text())["add"]["details"]
-    assert len(rows) == 1
     (case,) = rows[0]["result"]
     assert case["latency"] == pytest.approx(0.002)
-    assert case["compared_speedup"] is None
-    assert "baseline_us" not in case
-    assert "raw_speedup" not in case
-    if baseline == "matched":
+    assert case["latency_samples_ms"] == [0.002] * 3
+    if baseline == "live":
         assert case["base_latency_ms"] == pytest.approx(0.008)
         assert case["base_raw_speedup"] == pytest.approx(4.0)
-        assert case["base_miss_reason"] is None
+        assert case["compared_speedup"] == pytest.approx(4.0)
+        assert case["baseline_source"] == "opencv_cuda_live"
+        assert case["baseline_version"] == "test-opencv"
+        assert (suite.path / "closed.txt").read_text() == "closed"
     else:
         assert case["base_latency_ms"] is None
         assert case["base_raw_speedup"] is None
-        expected_reason = (
-            "missing operator/shape/dtype record" if baseline == "missing" else None
-        )
-        assert case["base_miss_reason"] == expected_reason
+        assert case["compared_speedup"] is None
+        assert case["baseline_source"] is None
 
 
 @pytest.mark.parametrize("candidate_fails", [False, True])
@@ -358,7 +370,8 @@ def test_profile_scope_excludes_warmup_and_cleans_up(suite, candidate_fails):
     benchmark = suite.path / "benchmark"
     benchmark.mkdir()
     (benchmark / "test_add_benchmark.py").write_text(
-        (ROOT / "benchmark/test_add_benchmark.py").read_text() + """
+        (ROOT / "benchmark/test_add_benchmark.py").read_text()
+        + """
 import sys
 from types import SimpleNamespace
 @pytest.fixture(autouse=True)
@@ -369,7 +382,8 @@ def fake_inputs(monkeypatch):
     monkeypatch.setattr(module, "make_inputs", lambda *a: (value,))
 """
     )
-    suite.makepyfile(candidate=f"""
+    suite.makepyfile(
+        candidate=f"""
 from pathlib import Path
 def add(*args):
     path = Path("events.txt")
@@ -377,9 +391,11 @@ def add(*args):
         out.write("call\\n")
     if {candidate_fails!r} and "enter" in path.read_text():
         raise RuntimeError("capture failure")
-""")
+"""
+    )
     with (suite.path / "conftest.py").open("a") as out:
-        out.write("""
+        out.write(
+            """
 from contextlib import contextmanager
 
 @contextmanager
@@ -392,7 +408,8 @@ def pytest_flaggems_profile_scope(backend, case_id):
     finally:
         with open("events.txt", "a") as out:
             out.write("exit\\n")
-""")
+"""
+        )
     result = suite.runpytest_subprocess(
         "benchmark/test_add_benchmark.py",
         "--device",
@@ -406,8 +423,8 @@ def pytest_flaggems_profile_scope(backend, case_id):
         "3",
         "--case-id",
         "benchmark/test_add_benchmark.py::test_add_benchmark::core::float32::0",
-        "--base-data",
-        "absent.json",
+        "--baseline",
+        "opencv-cuda",
     )
     result.assert_outcomes(**({"failed": 1} if candidate_fails else {"passed": 1}))
     expected = (
@@ -417,22 +434,26 @@ def pytest_flaggems_profile_scope(backend, case_id):
 
 
 def test_reference_fixture_calls_do_not_satisfy_case(suite):
-    suite.makepyfile("""
+    suite.makepyfile(
+        """
 import pytest
 @pytest.fixture
 def setup_only(candidate):
     candidate(1)
 def test_bypass(setup_only): pass
-""")
+"""
+    )
     suite.runpytest_subprocess("--ref-as-candidate").assert_outcomes(failed=1)
 
 
 def test_dummy_all_skip_is_not_validation_success(suite):
-    suite.makepyfile("""
+    suite.makepyfile(
+        """
 import pytest
 @pytest.mark.skip(reason="unsupported")
 def test_probe(candidate): candidate(1)
-""")
+"""
+    )
     result = suite.runpytest_subprocess("--dummy-candidate", "add")
     result.assert_outcomes(skipped=1)
     assert result.ret == pytest.ExitCode.TESTS_FAILED
@@ -444,13 +465,15 @@ def test_probe(candidate): candidate(1)
 
 @pytest.mark.parametrize("outcome", ["skip", "xfail"])
 def test_unadapted_reference_skip_cannot_hide_missing_declaration(suite, outcome):
-    suite.makepyfile(f"""
+    suite.makepyfile(
+        f"""
 import pytest
 def test_valid(candidate):
     assert candidate(1) == 2
 def test_unadapted():
     pytest.{outcome}("no reference declared")
-""")
+"""
+    )
     result = suite.runpytest_subprocess("--ref-as-candidate")
     result.assert_outcomes(passed=1, failed=1)
     result.stdout.fnmatch_lines(["*No predefined reference selected*"])
@@ -461,7 +484,8 @@ def dummy_benchmark(suite):
     directory = suite.path / "benchmark"
     directory.mkdir()
     (directory / "test_add_benchmark.py").write_text(
-        (ROOT / "benchmark/test_add_benchmark.py").read_text() + """
+        (ROOT / "benchmark/test_add_benchmark.py").read_text()
+        + """
 import sys
 @pytest.fixture(autouse=True)
 def fake_inputs(monkeypatch):
@@ -523,12 +547,14 @@ def test_dummy_benchmark_requires_all_selected_case_hits(
 
 @pytest.mark.parametrize("outcome", ["skip", "xfail"])
 def test_dummy_post_call_skip_is_a_failure(suite, outcome):
-    suite.makepyfile(f"""
+    suite.makepyfile(
+        f"""
 import pytest
 def test_probe(candidate, pytestconfig, request):
     pytestconfig._evaluation.run_probe(candidate, lambda: (1,), request.node.nodeid)
     pytest.{outcome}("after invocation")
-""")
+"""
+    )
     result = suite.runpytest_subprocess("--dummy-candidate", "add")
     result.assert_outcomes(failed=1)
     report = json.loads((suite.path / "dummy-candidate-report.json").read_text())

@@ -1,184 +1,226 @@
-# 添加算子
+# 添加 Triton 算子及 C++ 调用链
 
-两件事，分开做：**加一个对标 OpenCV 的接口**，和**加一个 Triton kernel**。
-一个新算子通常两件都要做；给已有算子换平台实现只做第二件。
+新增 Triton 算子时，除 Python 调用入口外，还需要接入 C++ 接口、lowering、
+kernel registry 和编译计划。已有 Python/Triton 实现也按这条路径补齐。
+C++ 接口与内存、stream 的约定见 [C++ operator interfaces](cpp-operators.md)。
 
-当前已实现的接口范围见 [C++ operator profiles](cpp-operators.md)。
-下面以完整 OpenCV 风格的 `bitwise_and` 扩展接口为例；mask/scalar 形态是扩展设计示范，
-并非当前 array-array profile 已提供的重载。
+## 调用链与文件位置
 
-## 一、添加新接口
+```text
+include/flagcv/{core,imgproc}.hpp       声明公开接口
+  -> src/{core,imgproc}/<family>.cpp   调用对应 lowering，传设备指针和 stream
+  -> src/lowering/<family>.cpp        校验操作数，构造 LoweredOp
+  -> src/runtime/runtime.cpp          查缓存、解析 registry、请求编译、加载和 launch
+       -> compiler/flagcv_codegen/main.py
+       -> backends/<platform>/compiler.py
+       -> compiler/flagcv_codegen/providers.py   选择调优参数与 grid
+       -> compiler/flagcv_codegen/triton_build.py
+       -> kernels/common/<family>.py            编译 @triton.jit 函数
+  -> backends/<platform>/backend.cpp  加载编译产物，在调用方 stream 上执行
+```
 
-### 1. 声明
+普通算子复用 runtime 和 backend plugin；它们负责缓存、编译通信、二进制加载和
+设备启动。只有新算子需要现有协议无法表达的参数或执行能力时，才扩展这些公共层。
 
-接口按 OpenCV 的模块归属放：`core` 放逐元素运算与基础变换，`imgproc` 放滤波、
-重采样、色彩空间。查 `opencv2/core.hpp` 或 `opencv2/imgproc.hpp` 里该函数的签名，
-照抄参数顺序和默认值，再按 FlagCV 的约定改两处。
+## 1. 明确接口语义并声明
 
-写进 `include/flagcv/core.hpp`：
+先确定输入输出类型、通道与布局、饱和或舍入规则，以及 mask、标量、缩放和重叠
+存储的语义。接口声明与实际 kernel 能力一致；尚未实现的重载不要先暴露。
+
+按 OpenCV 模块归属选择 `include/flagcv/core.hpp` 或 `imgproc.hpp`，保持操作数
+顺序，以 `Handle&` 开头，以带默认值的 `Stream` 结尾。`GpuMat` 不拥有设备内存，
+`dst` 使用 const 引用，调用方负责预分配输出。
+
+以 array-array 按位操作的接口形式为例：
 
 ```cpp
 void bitwise_and(Handle& handle, const GpuMat& src1, const GpuMat& src2,
-                 const GpuMat& dst, const GpuMat& mask = GpuMat(),
-                 Stream stream = nullptr);
+                 const GpuMat& dst, Stream stream = nullptr);
 ```
 
-两处改动：`handle` 领头，因为它带着后端和 kernel 缓存；`stream` 收尾且有默认值，
-让常见调用读起来还像 OpenCV。`dst` 传 const 引用，因为 `GpuMat` 是非拥有视图，
-改的是它指向的显存，不是它自己。
+## 2. Lowering：校验并构造参数
 
-OpenCV 支持的形态要一次补齐：`bitwise_and` 有 array⊕array 和 array⊕scalar 两种，
-漏掉后者就会出现"kernel 写了但没有入口能走到"的死代码。
+在 `src/lowering/lowering.hpp` 声明 lowering，在 `src/lowering/<family>.cpp`
+实现。同族算子可以复用 lowering 和编译期 mode，但应明确每个 mode 的类型限制。
+可参考 [pointwise.cpp](../src/lowering/pointwise.cpp) 和
+[flip.cpp](../src/lowering/flip.cpp)。
 
-### 2. Lowering
+在进入 runtime 前完成校验，包括：
 
-`src/lowering/bitwise.cpp`，一个算子族一个文件：
+- 空输入、非正尺寸、depth 和通道数限制。
+- 输入输出的尺寸、类型与通道是否匹配。
+- 基地址按元素大小对齐，pitch 足以容纳一行。
+- 原地操作与部分重叠是否安全；重排类操作尤其需要拒绝读写竞争。
+- 尺寸、索引和 stride 的整数范围。
+
+使用 `to_spec(image, "name")` 生成 `ImageSpec`，按需要调用
+`require_same_layout()` 等校验辅助函数。公开 API 的 pitch 单位是字节；
+`GpuMat::row_stride()` 转换后的 `ImageSpec::row_stride` 单位是元素。
+
+`LoweredOp` 保存 kernel 注册名、图像描述和参数，不保存设备指针。例如逐元素
+操作可以按下列顺序构造参数（省略前面的校验）：
 
 ```cpp
-LoweredOp lower_bitwise(const GpuMat& src1, const GpuMat& src2,
-                        const GpuMat& dst, const GpuMat& mask, int mode) {
-  /* to_spec() takes (image, name) in that order and rejects empty operands. */
-  const ImageSpec s1 = to_spec(src1, "src1");
-  const ImageSpec s2 = to_spec(src2, "src2");
-  const ImageSpec d = to_spec(dst, "dst");
-
-  /* require_same_layout() compares a pair, so chain it across the operands. */
-  require_same_layout(s1, s2);
-  require_same_layout(s1, d);
-  if (!mask.empty()) require_mask(to_spec(mask, "mask"), d);
-
-  LoweredOp op;
-  op.kernel = "bitwise_binary";
-  op.add_image(s1);
-  op.add_image(s2);
-  op.add_image(d);
-  if (!mask.empty()) op.add_image(to_spec(mask, "mask"));
-  op.add_hinted_param("width", s1.width);
-  op.add_param("height", s1.height);
-  /* ...每个操作数的 row_stride 用 add_hinted_param，顺序与 kernel 参数一致 */
-  op.add_constexpr("channels", s1.channels);
-  op.add_constexpr("mode", mode);
-  op.add_constexpr("has_mask", mask.empty() ? 0 : 1);
-  return op;
-}
+LoweredOp op;
+op.kernel = "my_op";
+op.add_image(s1);  // to_spec(src1, "src1")
+op.add_image(s2);  // to_spec(src2, "src2")
+op.add_image(d);   // to_spec(dst, "dst")
+op.add_hinted_param("width", s1.width);
+op.add_param("height", s1.height);
+op.add_hinted_param("src1_row_stride", s1.row_stride);
+op.add_hinted_param("src2_row_stride", s2.row_stride);
+op.add_hinted_param("dst_row_stride", d.row_stride);
+op.add_constexpr("CHANNELS", s1.channels);
 ```
 
-参数分三种，决定它怎么进 kernel cache key：
+参数的选择决定编译缓存如何复用：
 
-- `add_constexpr`：编译期常量，值进 key，每个新值编一个 kernel。只给模式、通道数这类小的封闭集合用。
-- `add_param`：运行期参数，只有类型（i32/i64）进 key，换值不重编。图像尺寸走这里。
-- `add_hinted_param`：运行期参数，另外按"能否被 16 整除"特化，和 Triton 自己 JIT 的做法一致。
-  给 row stride 和"界定向量化那一维"的尺寸（通常是 width）用：编译器靠它证明行首对齐、mask 按 16 个
-  元素一组不变，才会生成向量化访存。height 这类不影响向量化的尺寸别加，否则只会白白多出变体。
+| 方法 | 传给 kernel 的方式 | 缓存特化规则 |
+| --- | --- | --- |
+| `add_param` | 运行期 i32/i64 参数 | 按整数类型特化，不按具体数值特化 |
+| `add_hinted_param` | 运行期参数，附带对齐提示 | 在类型之外，按是否能被 16 整除特化 |
+| `add_constexpr` | 编译期常量 | 具体数值进入缓存 key |
 
-kernel 的参数表必须严格是：每个图像一个 `<name>_ptr`（按 `add_image` 顺序），然后按顺序是 lowering 的
-全部参数，最后是平台 `compiler.py` 填的调优 constexpr（`BLOCK_X` 等）。编译进程会逐个核对名字，对不上
-直接报错，而不是错位 launch。
+模式和通道数这类小集合适合 constexpr。尺寸与 stride 使用运行期参数；影响
+向量化的 width、row stride 可加 divisibility hint。图像内容不进入缓存 key。
 
-校验放这层，不放入口函数。`bitwise_and/or/xor/not` 是四个入口共一个族，校验写在入口
-里早晚会互相漂移。
+## 3. C++ 入口：lowering 后调用 launch
 
-行距不用手写：`to_spec()` 里 `ImageSpec::row_stride` 已经从 `GpuMat::row_pitch()`
-换算过了。**公开 API 的 pitch 是字节，kernel 参数是元素**，换算只在
-`GpuMat::row_stride()` 一个地方发生，别在别处再算一次。
-
-### 3. 入口实现
-
-`src/core/bitwise.cpp`：
+在 `src/core/<family>.cpp` 或 `src/imgproc/<family>.cpp` 实现公开函数，包含
+公开头文件、`src/lowering/lowering.hpp` 和 `src/runtime/runtime.hpp`。
+入口只负责调用 lowering、组装指针并传递 stream。现有代码的形式如下：
 
 ```cpp
 void bitwise_and(Handle& handle, const GpuMat& src1, const GpuMat& src2,
-                 const GpuMat& dst, const GpuMat& mask, Stream stream) {
-  const LoweredOp op = lower_bitwise(src1, src2, dst, mask, kModeAnd);
-  std::vector<void*> pointers{src1.data(), src2.data(), dst.data()};
-  if (!mask.empty()) pointers.push_back(mask.data());
-  launch(handle, op, pointers, stream);
+                 const GpuMat& dst, Stream stream) {
+  const LoweredOp op = lower_pointwise(src1, src2, dst, PointwiseMode::kAnd);
+  launch(handle, op, {src1.data(), src2.data(), dst.data()}, stream);
 }
 ```
 
-没有中央 dispatch，入口自己知道自己属于哪个族，直接调对应 lowering。
+指针列表必须与 `op.images` 的顺序和数量一致。入口不分配设备内存，不调用
+Python wrapper，也不自行同步。操作数校验留在 lowering，平台调优留在 provider。
 
-### 4. 注册与测试
+## 4. Triton kernel：提供可编译的参数签名
 
-- `src/CMakeLists.txt` 的 `add_library` 里加 `core/bitwise.cpp` 和
-  `lowering/bitwise.cpp`
-- `tests/CMakeLists.txt` 里加 `flagcv_add_test(bitwise)`，写 `tests/test_bitwise.cpp`
-- 按 `numerical-tolerance.md` 选容差级别。按位运算是 A 级，必须逐字节相同
+Python wrapper 里的 `numel()`、shape 查询、grid 计算和 JIT 启动不能直接作为
+C++ 的编译入口。C++ registry 指向 `@triton.jit` 函数；把 wrapper 所需的元数据
+显式放进 lowering 参数，并把 grid 与调优参数交给编译计划。
 
-## 二、添加 Triton kernel
+通用实现放在 `kernels/common/<family>.py`。保留原有 Python wrapper，以便 Python
+测试与使用方继续调用；如果原 kernel 只支持连续单通道输入，而 C++ 接口需要
+独立行距或多通道，应扩展 kernel 或提供单独的 kernel 入口。
 
-### 1. 通用 kernel 还是平台 kernel
+参数表必须严格按以下顺序排列：
 
-默认写通用的，放 `kernels/common/<family>.py`。只有当某平台需要本地化实现
-（厂商库更快、或硬件约束不同）时才在 `backends/<platform>/kernels/` 下再写一份。
+1. 每个 `op.images` 对应的 `<ImageSpec.name>_ptr`。
+2. `op.params` 中的参数，名称和顺序完全一致，constexpr 明确标注。
+3. 编译计划提供的调优 constexpr，例如 `BLOCK_X`、`BLOCK_Y`。
 
-两级 registry 按顺序查：先 `backends/<platform>/kernels/registry.json`，
-再 `kernels/registry.json`。
-
-**平台注册是排他的。** 平台一旦声明了某算子，那边失败就直接报给调用方，不会悄悄
-回落到通用 kernel。所以平台 kernel 的所有约束（depth、通道数、对齐）必须在该平台
-`compiler.py` 的 `identify()` 里编译前就查掉，而不是编译中才发现。
-
-### 2. 写 kernel
-
-`kernels/common/bitwise.py`：
+与上面的 `my_op` lowering 对应的签名为：
 
 ```python
 @triton.jit
-def bitwise_binary_kernel(
-    src1_ptr, src2_ptr, dst_ptr, mask_ptr,
-    width, height, channels,
-    src1_row_stride, src2_row_stride, dst_row_stride, mask_row_stride,
-    mode: tl.constexpr, has_mask: tl.constexpr,
+def my_op_kernel(
+    src1_ptr, src2_ptr, dst_ptr,
+    width, height,
+    src1_row_stride, src2_row_stride, dst_row_stride,
+    CHANNELS: tl.constexpr,
     BLOCK_X: tl.constexpr, BLOCK_Y: tl.constexpr,
 ):
+    # 实现操作语义；row_stride 以元素计，行偏移使用足够宽的整数。
     ...
-    store_predicate = in_bounds
-    if has_mask:
-        store_predicate = store_predicate & (tl.load(mask_ptr + ...) != 0)
-    tl.store(dst_ptr + dst_offsets, result, mask=store_predicate)
 ```
 
-三条硬约束：
+编译器 `_check_arguments()` 会核对参数名和顺序。kernel 的访存还需要覆盖 tile
+边界、独立行距和通道交错，避免写入行尾 padding。可参考
+[pointwise.py](../kernels/common/pointwise.py)。
 
-**行距是元素，不是字节。** 指针按像素深度定型，指针算术就按元素前进。
-`y * row_stride + x` 里的 `row_stride` 必须是元素数。写成字节的话 8 位能跑对，
-16 位差 2 倍、32 位差 4 倍 —— 这是老代码里真实踩过的坑。
+## 5. Kernel 注册和编译计划
 
-**mask 折进 store 谓词。** mask 的语义是"不写"，不是"写 0"。被 mask 排除的目标像素
-要保持原字节不变，所以用 `mask=store_predicate`，不要用
-`tl.where(mask, result, 0)`。带 mask 的调用因此要求 `dst` 已初始化。
-
-**标量当设备 buffer 传。** 标量操作数传成 `channels` 个元素的设备 buffer，不要编译
-成常量。否则改一次标量值就触发一次重编译。只有元素个数进 cache key，值永远不进。
-
-`BLOCK_X`/`BLOCK_Y` 这类留给平台 `compiler.py` 填，kernel 里只声明。
-
-### 3. 登记
-
-`kernels/registry.json`：
+在 `kernels/registry.json` 的 `kernels` 数组中增加：
 
 ```json
-{ "platform": "common",
-  "kernels": [
-    { "name": "bitwise_binary",
-      "source": "common/bitwise.py",
-      "function": "bitwise_binary_kernel" }
-  ] }
+{
+  "name": "my_op",
+  "source": "common/my_op.py",
+  "function": "my_op_kernel"
+}
 ```
 
-`name` 就是 lowering 里填的 `op.kernel`。
+`name` 必须等于 `op.kernel`，`source` 相对该 registry 所在目录，`function`
+必须是可直接编译的 JIT 函数。
 
-### 4. 平台特化（可选）
+然后在 `compiler/flagcv_codegen/providers.py` 添加 plan，并登记到 `PLANS`。
+例如对按行分块的逐元素 kernel：
 
-在 `backends/<platform>/compiler.py` 里：
+```python
+def plan_my_op(request, facts):
+    # block 和 warp 应按 facts 中的平台约束选择，或复用签名相容的已有 plan。
+    block_x = _power_of_two_at_most(max(facts["tile"] // 4, 64))
+    tuning = {"BLOCK_X": block_x, "BLOCK_Y": 1}
+    grid = [
+        {"product": ["width", "CHANNELS"], "block": block_x},
+        {"product": ["height"], "block": 1},
+        1,
+    ]
+    return tuning, min(4, facts["max_warps"]), grid
 
-- `identify()` 回答"这个 op 我接不接"，并在这里把所有约束查完
-- `compile()` 选 block 大小、编译、产出 artifact
 
-然后在 `backends/<platform>/kernels/registry.json` 里登记。调优参数放
-`backends/<platform>/tuning/<family>.yaml`。
+PLANS["my_op"] = plan_my_op
+```
 
-core 库不链 Python、不链厂商工具链，编译在独立进程里（`compiler/`）完成，
-plugin 只负责加载产物和 launch。plugin 不能 include core 的内部头文件 ——
-它拿到的是纯数据，这样 core 加字段不会破 ABI。
+这个 plan 示例采用保守的元素块大小；具体选择应考虑操作数 depth 和平台资源
+限制。`tuning` 的 key 要与 kernel 尾部 constexpr 完全一致，grid 中引用的名字
+必须来自 lowering 参数。运行期尺寸值不会发送给编译进程，runtime 根据 plan
+返回的表达式计算实际 grid；不要在 provider 中读取请求里不存在的 width 数值。
+
+`backends/<platform>/compiler.py` 调用公共 plan 和 `compile_kernel()`；
+`identify()` 仅提供编译器身份摘要，用于缓存失效。平台能力检查放在
+`compile()` 或它调用的 plan 中，不能依赖无操作数信息的 `identify()`。
+
+默认先查 `backends/<platform>/kernels/registry.json`，再查公共 registry。
+平台注册具有排他性：命中后失败会直接报错，不会回退公共 kernel。
+只有需要平台实现时才增加平台 kernel 和 registry 条目。确认插件报告的 target、
+已安装的 Triton 编译后端及二进制格式一致；注册成功本身不代表设备链路已验证。
+
+## 6. 接入构建与验证
+
+将新增入口和 lowering 源文件加入 `src/CMakeLists.txt` 的 `add_library(flagcv ...)`。
+如果扩展已有族文件，无需重复添加。头文件由现有安装规则导出，通用 Python kernel
+也由现有 `kernels/common/` 安装规则打包。
+
+C++ 精度测试放在 `tests/test_<family>.cpp`，CPU 标量参考放在
+`reference/cpu/`，容差规则见 [数值容差策略](numerical-tolerance.md)。在
+`tests/CMakeLists.txt` 调用 `flagcv_add_test(<family>)`，并链接测试分配显存所需的
+设备 runtime，依赖对应 backend plugin。已有测试配置以 CUDA runtime 为例；
+迁移到其他设备时，测试的内存分配、拷贝、stream 和同步也要相应接入。
+
+在隔离设备的环境中，从公开 C++ 接口运行测试，验证首次编译加载、缓存复用和
+GPU 输出对比。用例应包含边界尺寸、支持的 depth/通道、不同 pitch、偏移指针、
+输入与 padding 保护、重叠限制和非默认 stream。另跑原 Python 用例，确认 wrapper
+保留兼容。Python 性能测试默认现场执行 OpenCV CUDA 基线；新增算子需在
+`adapters/opencv_cuda/bridge.cpp` 添加真实 OpenCV 调用，并在
+`adapters/opencv_cuda.py` 接入参数映射。对应流程见
+[OpenCV CUDA reference](opencv-add-reference.md)。其他后端可显式使用
+`--baseline none` 测量 candidate。测量数据不写入本文档。
+
+NVIDIA 环境下的构建与调用链检查示例：
+
+```bash
+cmake -S . -B build -DBUILD_SHARED_LIBS=ON -DFLAGCV_BUILD_TESTS=ON \
+  -DFLAGCV_BACKENDS=nvidia -DFLAGCV_WARNINGS_AS_ERRORS=ON
+cmake --build build -j 8
+CUDA_VISIBLE_DEVICES=0 ctest --test-dir build --output-on-failure
+```
+
+## 扩展 mask 和标量时的约定
+
+mask 表示“不写”，被排除的目标像素保留原值。使用单通道 8U mask，并将 mask
+合并到 store 谓词；调用方需初始化 `dst`。可选 mask 的图像描述、指针及参数签名
+必须在 lowering、入口和 kernel 之间保持一致。
+
+标量操作数可采用调用方提供的设备 buffer，让通道值在运行期加载；不要把每次
+调用的像素值编码进 constexpr。标量 buffer 的描述与索引规则需要明确实现，
+不能直接套用会要求图像尺寸相等的 array-array lowering。

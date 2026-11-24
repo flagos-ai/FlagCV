@@ -32,8 +32,8 @@ The NVIDIA backend is the one built and tested here; the other five implement
 the same plugin contract and compile against their SDKs when it is present
 (`-DCUDAToolkit_ROOT=<corex>` for `iluvatar`).
 
-#The supported C++ operator profiles, validation commands and performance results are
-documented in [C++ operators](docs/cpp-operators.md).
+C++ interface conventions and the call path are documented in
+[C++ operator interfaces](docs/cpp-operators.md).
 
 ## Build and test
 
@@ -43,7 +43,7 @@ cmake --build build -j
 CUDA_VISIBLE_DEVICES=0 ctest --test-dir build --output-on-failure
 ```
 
-`FLAGCV_BUILD_TESTS` builds operator tests for the backends a device runtime is wired up for.
+`FLAGCV_BUILD_TESTS` enables CTest integration; no C++ operator tests are currently registered.
 
 ### Use from C++
 
@@ -110,6 +110,14 @@ cmake --build build
 ```
 
 The first call in a process takes about 2 seconds: it starts the compiler process and compiles the kernel. Later calls only launch. A call compiles again only when it needs a new kernel variant: a different pixel depth, channel count or flip direction, or a width, row pitch or buffer address that changes between a multiple of 16 and not. Each variant compiles once per process. Compiled binaries are cached under `~/.cache/flagcv`.
+
+### Live performance baseline
+
+Python benchmarks compare candidates with OpenCV CUDA executed on the same
+inputs and CUDA stream. Build the validation bridge separately following
+[OpenCV CUDA reference](docs/opencv-add-reference.md). The default comparison
+checks correctness before timing; `--baseline none` selects candidate-only
+timing. See [Python evaluation](docs/python-evaluation.md) for invocation options.
 
 ### Environment variables
 

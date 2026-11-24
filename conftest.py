@@ -65,7 +65,10 @@ def pytest_addoption(parser):
     group.addoption("--case-id", action="append", default=[])
     group.addoption("--record", choices=["none", "log", "json"], default="none")
     group.addoption("--output", type=Path)
-    group.addoption("--base-data", type=Path)
+    group.addoption(
+        "--baseline", choices=("opencv-cuda", "none"), default="opencv-cuda"
+    )
+    group.addoption("--benchmark-samples", type=int, default=3)
     group.addoption("--reference", metavar="FILE:FUNCTION", help="Independent oracle")
 
 
@@ -114,6 +117,8 @@ def pytest_configure(config):
             raise pytest.UsageError(
                 "Candidate validation requires execution without xdist"
             )
+    if config.getoption("benchmark_samples") < 1:
+        raise pytest.UsageError("--benchmark-samples must be positive")
     for operator in OPERATORS:
         config.addinivalue_line("markers", f"{operator}: FlagCV operator evaluation")
     config._evaluation = Evaluation(config)

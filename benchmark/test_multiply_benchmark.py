@@ -15,5 +15,4 @@ def test_multiply_benchmark(request, pytestconfig):
         cases=TIMING_CASES,
         make_inputs=make_inputs,
         describe=describe,
-        baseline_tensor="a",
     )

@@ -72,8 +72,8 @@ divisibility by 16, as Triton's own JIT does, so row accesses can vectorise.
 **Files.** Compiled binaries go to `$FLAGCV_CACHE_DIR/artifacts/<hash>/`
 (default `~/.cache/flagcv`); Triton's own cache (`~/.triton/cache`) holds the
 intermediate IR. The runtime's kernel cache lives in memory per `Handle`, so
-a new host process restarts the compiler process; the Triton cache makes its
-compiles cheap, but the process start (~2 s including Triton import) is paid
+a new host process restarts the compiler process. Triton can reuse cached
+compilation artifacts, but the compiler process must start and import Triton
 again.
 
 **Locations and overrides.** `FLAGCV_PYTHON` selects the interpreter for the
