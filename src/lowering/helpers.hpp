@@ -7,15 +7,34 @@
 
 #include "src/image/types.hpp"
 
+#include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace flagcv {
 
-/* Builds the internal spec, converting the byte pitch to an element stride. */
+/*
+ * Builds the internal spec, converting the byte pitch to an element stride.
+ *
+ * Also rejects layouts no kernel can address safely: non-positive extents,
+ * rows that overlap because the pitch is shorter than a row, and a base
+ * pointer that is not aligned to the pixel depth (a typed device load from it
+ * would fault).
+ */
 inline ImageSpec to_spec(const GpuMat& image, const std::string& name) {
   if (image.empty()) {
     throw std::invalid_argument("operand '" + name + "' must not be empty");
+  }
+  if (image.width() <= 0 || image.height() <= 0 || image.channels() <= 0) {
+    throw std::invalid_argument("operand '" + name +
+                                "' must have positive width, height and "
+                                "channels");
+  }
+  const auto address = reinterpret_cast<std::uintptr_t>(image.data());
+  if (address % depth_size(image.depth()) != 0) {
+    throw std::invalid_argument("operand '" + name +
+                                "' data is not aligned to its pixel depth");
   }
   ImageSpec spec;
   spec.name = name;
@@ -24,7 +43,32 @@ inline ImageSpec to_spec(const GpuMat& image, const std::string& name) {
   spec.depth = image.depth();
   spec.channels = image.channels();
   spec.row_stride = image.row_stride();
+  if (spec.row_stride < std::int64_t{spec.width} * spec.channels) {
+    throw std::invalid_argument("operand '" + name +
+                                "' row pitch is shorter than one row");
+  }
   return spec;
+}
+
+/*
+ * True when the byte ranges two images occupy intersect. Kernels that read
+ * one pixel and write another cannot run in place, so their lowering rejects
+ * overlap instead of producing an order-dependent result.
+ */
+inline bool images_overlap(const GpuMat& a, const GpuMat& b) {
+  auto range = [](const GpuMat& image) {
+    using U = std::uintptr_t;
+    const U begin = reinterpret_cast<U>(image.data());
+    const U row_bytes = static_cast<U>(image.width()) *
+                        static_cast<U>(image.channels()) *
+                        depth_size(image.depth());
+    const U last_row = static_cast<U>(image.height() - 1) *
+                       static_cast<U>(image.row_pitch());
+    return std::make_pair(begin, begin + last_row + row_bytes);
+  };
+  const auto ra = range(a);
+  const auto rb = range(b);
+  return ra.first < rb.second && rb.first < ra.second;
 }
 
 inline void require_same_layout(const ImageSpec& a, const ImageSpec& b) {

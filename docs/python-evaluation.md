@@ -2,11 +2,11 @@
 
 FlagCV's Python evaluation workflow supports case listing and selection,
 candidate override, dummy candidate injection, reference as candidate, and
-benchmark comparison with static baseline data. Operator tests and benchmarks
+benchmark comparison with a live OpenCV CUDA baseline. Operator tests and benchmarks
 use the root pytest options to expose these capabilities. Each operator defines
 its own callable signature, inputs, and reference.
 
-The C++ integration has its own CTest entry points.
+Python candidates run independently of the C++ integration.
 
 Add a default reference in `reference/OP.py` with a callable named
 `reference`, and mark its tests and benchmarks with `@pytest.mark.OP`. The
@@ -16,9 +16,9 @@ only the operator named by `--dummy-candidate`.
 
 ## Example: add
 
-The `add` profile matches
-[ops-baseline's OpenCV CUDA add](https://github.com/zhaojs12345/ops-baseline/tree/3b2f022314b0d6e3bf6857f400c31beb65a505dd/ops/opencv).
-It covers four image sizes with float32 and uint8, contiguous single-channel
+Build the live baseline bridge using the
+[OpenCV CUDA reference instructions](opencv-add-reference.md).
+The add workload uses float32 and uint8, contiguous single-channel
 inputs, no mask and an independent preallocated destination. A candidate
 implements `add(a, b, dst)`, writes all of `dst`, returns that same tensor and
 leaves both inputs unchanged. The uint8 result saturates at 255.
@@ -33,7 +33,7 @@ python -m pytest tests/test_add.py -m add --device cpu --ref-as-candidate
 python -m pytest tests/test_add.py benchmark/test_add_benchmark.py -m add --device cpu --dummy-candidate add --dummy-report add-dummy.json
 python -m pytest tests/test_add.py -m add --override add:/path/to/candidate.py
 python -m pytest benchmark/test_add_benchmark.py -m add --override add:/path/to/candidate.py \
-  --case-id 'benchmark/test_add_benchmark.py::test_add_benchmark::core::uint8::3' --base-data /path/to/op_opencv_perf_baseline.json \
+  --case-id 'benchmark/test_add_benchmark.py::test_add_benchmark::core::uint8::3' \
   --record json --output add-result.json
 ```
 
@@ -49,11 +49,22 @@ device type. Register backend-specific references in `reference/`.
 When there is no backend-specific entry, the runner uses the operator's
 default reference.
 
-For this profile, baseline lookup requires an exact shape, dtype and
-OpenCV profile match. With `--record json`, benchmark output uses per-operator `details` and
-per-dtype `result` rows. `latency` and `base_latency_ms` are in milliseconds,
-and `base_raw_speedup` is baseline latency divided by candidate latency.
-`compared_speedup` is null for the OpenCV CUDA comparison.
+Performance comparisons default to `--baseline opencv-cuda`. Each case uses the
+same source tensors with independent preallocated outputs. The runner validates
+candidate and OpenCV outputs against the Torch reference and each other before
+sampling, and checks that inputs are unchanged. It alternates the measurement
+order over `--benchmark-samples` paired samples and reports median latencies.
+OpenCV errors and missing bridge libraries fail the case. Use `--baseline none`
+explicitly for candidate-only timing; other backends need this mode.
+
+With `--record json`, benchmark output uses per-operator `details` and per-dtype
+`result` rows. `latency`, `base_latency_ms` and their sample arrays are in
+milliseconds. `base_raw_speedup` and `compared_speedup` are both live baseline
+latency divided by candidate latency; `baseline_source` is `opencv_cuda_live`
+and `baseline_version` identifies the linked OpenCV version. Disabled baselines
+have null baseline latency and speedup fields. Historical `--base-data` JSON
+lookup is no longer used.
+
 Correctness JSON records include pytest `params`, an `opname` list, and
 per-test `candidate_calls`. The add report stores `params.shape` as an array
 and `params.dtype` as a string. Reference

@@ -1,9 +1,9 @@
 """Run, list and profile FlagCV benchmarks."""
 
-import json
 import math
 from contextlib import nullcontext
 from functools import partial
+from statistics import median
 
 import pytest
 
@@ -51,34 +51,118 @@ def _profile(config, case_id, candidate, build):
         ), "Profile did not execute its candidate"
 
 
-def _lookup_baseline(data, op_name, match_shape, row):
-    record = (
-        data.get(op_name, {})
-        .get("shapes", {})
-        .get(str(match_shape), {})
-        .get(row["dtype"])
+def _prepare_baseline(op_name, args, vendor):
+    import torch
+
+    if vendor != "nvidia":
+        pytest.fail(
+            "OpenCV CUDA baseline requires NVIDIA; use --baseline none for timing only"
+        )
+    from adapters.opencv_cuda import prepare
+
+    dst_index = 1 if op_name in ("bitwise_not", "flip") else 2
+    baseline_args = list(args)
+    baseline_args[dst_index] = torch.empty_like(args[dst_index])
+    baseline_args = tuple(baseline_args)
+    return prepare(op_name, baseline_args), baseline_args
+
+
+def _validate_outputs(op_name, candidate, args, baseline, baseline_args):
+    """Validate both implementations before timing on identical inputs."""
+    import torch
+
+    from helpers.correctness import poison_output
+    from helpers.tolerance import (
+        assert_bitwise_equal,
+        assert_exact,
+        assert_one_lsb,
+        assert_relative_close,
     )
-    if record is None:
-        return None, "missing operator/shape/dtype record"
-    config = record.get("config", {})
-    required = {
-        "native_api": f"cv::cuda::{op_name}",
-        "output_preallocated": True,
-        "output_dtype": row["dtype"],
-        # The legacy OpenCV CUDA baseline does not record tensor contiguity.
-        **{key: value for key, value in row["params"].items() if key != "contiguous"},
-    }
-    if any(
-        key not in config or config[key] != value for key, value in required.items()
-    ):
-        return None, "incompatible OpenCV CUDA configuration"
-    latency = record.get("T_us")
-    if type(latency) not in (float, int) or not math.isfinite(latency) or latency <= 0:
-        return None, "missing or invalid T_us"
-    return latency, None
+    from reference import get_reference
+
+    dst_index = 1 if op_name in ("bitwise_not", "flip") else 2
+    sources, dst, extra = args[:dst_index], args[dst_index], args[dst_index + 1 :]
+    snapshots = tuple(source.clone() for source in sources)
+    expected = torch.empty_like(dst)
+    reference_args = tuple(source.clone() for source in snapshots)
+    get_reference(op_name, dst.device)(*reference_args, expected, *extra)
+    if op_name == "flip":
+        compare = assert_bitwise_equal
+    elif dst.dtype == torch.uint8:
+        compare = assert_one_lsb if op_name in ("add", "subtract") else assert_exact
+    else:
+        compare = assert_relative_close
+
+    scope = (
+        torch.get_device_module(dst.device).device(dst.device)
+        if dst.device.type != "cpu"
+        else nullcontext()
+    )
+    with scope:
+        for function, operands in ((baseline, baseline_args), (candidate, args)):
+            if function is None:
+                continue
+            poison_output(operands[dst_index], expected)
+            assert (
+                function(*operands) is operands[dst_index]
+            ), "Operator must return preallocated dst"
+            compare(operands[dst_index], expected)
+            for source, snapshot in zip(sources, snapshots):
+                assert_bitwise_equal(source, snapshot)
+    if baseline is not None:
+        compare(dst, baseline_args[dst_index])
 
 
-def run(request, config, *, op_name, cases, make_inputs, describe, baseline_tensor):
+def _time_case(config, op_name, candidate, args):
+    baseline = None
+    baseline_args = None
+    if config.getoption("baseline") == "opencv-cuda":
+        baseline, baseline_args = _prepare_baseline(
+            op_name, args, config._flagcv_runtime.vendor
+        )
+    try:
+        _validate_outputs(op_name, candidate, args, baseline, baseline_args)
+        candidate_samples, baseline_samples = [], []
+        for sample in range(config.getoption("benchmark_samples")):
+            order = (False, True) if sample % 2 == 0 else (True, False)
+            for is_baseline in order:
+                if is_baseline and baseline is None:
+                    continue
+                function = baseline if is_baseline else candidate
+                operands = baseline_args if is_baseline else args
+                calls = 0
+
+                def observed(*values):
+                    nonlocal calls
+                    calls += 1
+                    return function(*values)
+
+                latency = _measure_ms(observed, operands)
+                assert calls > 0, "Candidate timer did not execute the candidate"
+                assert math.isfinite(latency) and latency > 0
+                (baseline_samples if is_baseline else candidate_samples).append(latency)
+        config._evaluation.timings += 1
+        latency = median(candidate_samples)
+        base_latency = median(baseline_samples) if baseline_samples else None
+        speedup = base_latency / latency if base_latency is not None else None
+        return {
+            "latency": latency,
+            "latency_samples_ms": candidate_samples,
+            "base_latency_ms": base_latency,
+            "base_latency_samples_ms": baseline_samples,
+            "base_raw_speedup": speedup,
+            "compared_speedup": speedup,
+            "baseline_source": "opencv_cuda_live" if baseline else None,
+            "baseline_version": baseline.version if baseline else None,
+            "base_miss_reason": None if baseline else "baseline disabled",
+            "accuracy_checked": True,
+        }
+    finally:
+        if baseline is not None:
+            baseline.close()
+
+
+def run(request, config, *, op_name, cases, make_inputs, describe):
     """Run operator-owned cases using their input builder and metadata."""
     cases = tuple(cases)
     rows = []
@@ -119,14 +203,6 @@ def run(request, config, *, op_name, cases, make_inputs, describe, baseline_tens
         )
     candidate = request.getfixturevalue("candidate")
     device = config.getoption("device")
-    baseline_path = config.getoption("base_data")
-    baseline = (
-        json.loads(baseline_path.read_text())
-        if baseline_path
-        and candidate.source != "dummy"
-        and not config.getoption("profile_only")
-        else None
-    )
     workloads = [
         (case, row)
         for case, row in zip(cases, rows)
@@ -145,30 +221,13 @@ def run(request, config, *, op_name, cases, make_inputs, describe, baseline_tens
             continue
 
         args = build()
-        before = state.calls
-        latency = _measure_ms(candidate, args)
-        assert state.calls > before, "Candidate timer did not execute the candidate"
-        assert math.isfinite(latency) and latency > 0
-        state.timings += 1
-        base_latency_ms = None
-        miss_reason = None
-        if baseline is not None:
-            match_shape = row["shape"][baseline_tensor]
-            base_us, miss_reason = _lookup_baseline(baseline, op_name, match_shape, row)
-            if base_us is not None:
-                base_latency_ms = base_us / 1000
+        timing = _time_case(config, op_name, candidate, args)
         result = {
             "case_id": case_id,
             "shape_detail": row["shape"],
             "params": row["params"],
-            "latency": latency,
             "candidate_source": candidate.source,
-            "base_latency_ms": base_latency_ms,
-            "base_raw_speedup": (
-                base_latency_ms / latency if base_latency_ms is not None else None
-            ),
-            "compared_speedup": None,
-            "base_miss_reason": miss_reason,
+            **timing,
         }
         by_dtype.setdefault(row["dtype"], []).append(result)
 
